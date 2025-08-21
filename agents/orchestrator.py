@@ -38,6 +38,8 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         self.routing_chain = LLMChain(llm=self.llm, prompt=self.routing_prompt)
     
     def process_customer_message(self, message: str, conversation_id: str) -> Dict[str, Any]:
+        print(f"🎯 Orchestrator processing: {message}")
+        
         # Get conversation state
         if conversation_id not in self.conversation_state:
             self.conversation_state[conversation_id] = {
@@ -51,6 +53,7 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         
         # Route to appropriate agent(s)
         routing_decision = self._route_message(message, state)
+        print(f"🎯 Routing to: {routing_decision}")
         
         # Process with primary agent
         primary_response = self._process_with_agent(
@@ -58,6 +61,8 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
             message, 
             state
         )
+        
+        print(f"🎯 Primary agent response: {primary_response}")
         
         # Process with secondary agents if needed
         secondary_responses = {}
@@ -75,6 +80,8 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
             state
         )
         
+        print(f"🎯 Final orchestrator response: {final_response}")
+        
         state["conversation_history"].append({"type": "agent", "message": final_response})
         
         return {
@@ -86,27 +93,57 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
     
     def _route_message(self, message: str, state: Dict) -> Dict:
         try:
-            routing_result = self.routing_chain.run(
-                message=message,
-                conversation_history=json.dumps(state["conversation_history"][-5:]),
-                active_services=json.dumps(state["active_services"])
-            )
-            return json.loads(routing_result)
-        except:
-            return {"primary_agent": "skip_hire", "secondary_agents": [], "reasoning": "default"}
+            routing_result = self.routing_chain.invoke({
+                "message": message,
+                "conversation_history": json.dumps(state["conversation_history"][-5:]),
+                "active_services": json.dumps(state["active_services"])
+            })
+            return json.loads(routing_result["text"])
+        except Exception as e:
+            print(f"❌ Routing error: {e}")
+            # Simple keyword-based routing as fallback
+            message_lower = message.lower()
+            if any(word in message_lower for word in ["man", "van", "collection", "clearance"]):
+                return {"primary_agent": "man_and_van", "secondary_agents": [], "reasoning": "keyword_fallback"}
+            elif any(word in message_lower for word in ["grab", "lorry", "wheeler", "muck"]):
+                return {"primary_agent": "grab_hire", "secondary_agents": [], "reasoning": "keyword_fallback"}
+            elif any(word in message_lower for word in ["price", "cost", "quote", "pricing"]):
+                return {"primary_agent": "pricing", "secondary_agents": [], "reasoning": "keyword_fallback"}
+            else:
+                return {"primary_agent": "skip_hire", "secondary_agents": [], "reasoning": "default_fallback"}
     
     def _process_with_agent(self, agent_name: str, message: str, state: Dict) -> str:
+        print(f"🤖 Processing with {agent_name} agent")
+        
         if agent_name in self.agents:
-            return self.agents[agent_name].process_message(message, state)
-        return "I understand. How can I help you today?"
+            try:
+                response = self.agents[agent_name].process_message(message, state)
+                print(f"🤖 {agent_name} agent returned: {response}")
+                return response
+            except Exception as e:
+                print(f"❌ Agent {agent_name} error: {e}")
+                return f"I can help you with {agent_name.replace('_', ' ')}. Could you provide more details?"
+        else:
+            print(f"❌ Agent {agent_name} not found")
+            return "I understand. How can I help you today?"
     
     def _coordinate_responses(self, primary: str, secondary: Dict, state: Dict) -> str:
+        # If no secondary responses, return primary
         if not secondary:
             return primary
         
-        # Simple coordination - combine responses
-        all_responses = [primary] + list(secondary.values())
-        return " ".join(all_responses)
+        # If we have secondary responses, intelligently combine them
+        all_responses = [primary]
+        for agent_name, response in secondary.items():
+            if response and response != primary:
+                all_responses.append(response)
+        
+        # Return the most comprehensive response or combine if needed
+        if len(all_responses) == 1:
+            return all_responses[0]
+        else:
+            # Combine responses intelligently
+            return " ".join(all_responses)
     
     def detect_services_in_message(self, message: str) -> List[str]:
         message_lower = message.lower()
