@@ -6,90 +6,39 @@ from typing import Dict, Any, Optional
 from langchain.tools import BaseTool
 from pydantic import Field
 
-# --- Assume these are defined or imported elsewhere for simplicity ---
-WASTEKING_ACCESS_TOKEN = "your_wasteking_access_token"
-WASTEKING_BASE_URL = "https://wk-smp-api-dev.azurewebsites.net/"
-TWILIO_ACCOUNT_SID = "your_twilio_sid"
-TWILIO_AUTH_TOKEN = "your_twilio_token"
-TWILIO_PHONE_NUMBER = "your_twilio_phone_number"
+# Note: This code assumes that the required configuration variables and
+# other tool classes (like SMSTool) are available in the environment.
 
-try:
-    from twilio.rest import Client
-    TWILIO_AVAILABLE = True
-except ImportError:
-    TWILIO_AVAILABLE = False
-
-# --- SMSTool Class ---
-class SMSTool(BaseTool):
-    name: str = "sms"
-    description: str = "Send SMS messages via Twilio"
-    account_sid: str = Field(default=TWILIO_ACCOUNT_SID)
-    auth_token: str = Field(default=TWILIO_AUTH_TOKEN)
-    phone_number: str = Field(default=TWILIO_PHONE_NUMBER)
-    
-    def _run(self, phone: str, amount: str, booking_ref: str, payment_link: str) -> Dict[str, Any]:
-        if not TWILIO_AVAILABLE:
-            return {"success": False, "error": "Twilio not available"}
-        
-        try:
-            if phone.startswith('0'):
-                phone = f"+44{phone[1:]}"
-            elif not phone.startswith('+'):
-                phone = f"+44{phone}"
-            
-            if not re.match(r'^\+44\d{9,10}$', phone):
-                return {"success": False, "error": "Invalid UK phone number"}
-            
-            client = Client(self.account_sid, self.auth_token)
-            message_body = f"""Waste King Payment
-Amount: £{amount}
-Reference: {booking_ref}
-
-Pay securely: {payment_link}
-
-Thank you!"""
-            
-            message = client.messages.create(
-                body=message_body,
-                from_=self.phone_number,
-                to=phone
-            )
-            
-            return {
-                "success": True,
-                "sms_sid": message.sid,
-                "phone": phone,
-                "amount": amount
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-# --- SMPAPITool Class ---
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
     description: str = "Get real pricing, create and update bookings with WasteKing SMP API"
-    base_url: str = Field(default=WASTEKING_BASE_URL)
-    access_token: str = Field(default=WASTEKING_ACCESS_TOKEN)
+    base_url: str = Field(default="https://wk-smp-api-dev.azurewebsites.net/")
+    access_token: str = Field(default="")
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         try:
-            if action == "get_price_with_booking":
-                return self._get_price_with_booking(**kwargs)
+            print(f"🔧 SMP API Tool called with action: {action}")
+            print(f"🔧 Parameters: {kwargs}")
+            
+            if action == "get_pricing" or action == "get_price":
+                return self._get_pricing(**kwargs)
             elif action == "confirm_and_pay":
                 return self._confirm_and_pay(**kwargs)
-            elif action == "update_booking":
-                return self._update_booking(**kwargs)
-            elif action == "check_supplier_availability":
-                return self._check_supplier_availability(**kwargs)
             elif action == "call_supplier":
                 return self._call_supplier(**kwargs)
+            elif action == "check_supplier_availability":
+                return self._check_supplier_availability(**kwargs)
+            elif action == "update_booking":
+                return self._update_booking(**kwargs)
             else:
+                print(f"❌ Unknown action: {action}")
                 return {"success": False, "error": f"Unknown action: {action}"}
         except Exception as e:
+            print(f"❌ SMP API Error: {str(e)}")
             return {"success": False, "error": str(e)}
-
-    # Helper method to create a booking
+    
     def _create_booking(self) -> Dict[str, Any]:
+        """Helper method: Creates a new booking and returns the booking reference."""
         print("📞 Creating new booking...")
         headers = {
             "x-wasteking-request": self.access_token,
@@ -111,20 +60,27 @@ class SMPAPITool(BaseTool):
                 return {"success": False, "error": f"Failed to create booking. Status: {response.status_code}"}
         except Exception as e:
             return {"success": False, "error": f"Booking creation error: {str(e)}"}
-
-    # Orchestrator for getting price and booking in one go
-    def _get_price_with_booking(self, postcode: str, service: str, type_: str, **kwargs) -> Dict[str, Any]:
-        print(f"💰 Orchestrating price lookup and booking creation for {service} in {postcode}")
+    
+    def _get_pricing(self, postcode: str = "", service: str = "", type_: str = "", **kwargs) -> Dict[str, Any]:
+        """
+        Orchestrator: Gets a price by creating a temporary booking and updating it.
+        This does NOT confirm the booking.
+        """
+        print(f"💰 Getting pricing for {service} {type_} in {postcode}")
         
         if not postcode or not service:
+            print("❌ Missing required parameters")
             return {"success": False, "error": "Missing postcode or service"}
         
+        # Step 1: Create a booking to get a booking reference
         booking_result = self._create_booking()
         if not booking_result["success"]:
+            print("❌ Booking creation failed. Falling back to default pricing.")
             return self._get_fallback_pricing(service, type_)
         
         booking_ref = booking_result["booking_ref"]
         
+        # Step 2: Update the booking with search details to get a quote
         search_payload = {
             "search": {
                 "postCode": postcode,
@@ -135,6 +91,7 @@ class SMPAPITool(BaseTool):
         update_result = self._update_booking(booking_ref, search_payload)
         
         if not update_result["success"]:
+            print("❌ Price update failed. Falling back to default pricing.")
             return self._get_fallback_pricing(service, type_)
         
         quote = update_result["data"].get('quote', {})
@@ -148,17 +105,20 @@ class SMPAPITool(BaseTool):
                 "price": price,
                 "supplier_phone": quote.get('supplierPhone', '07823656762'),
                 "supplier_name": quote.get('supplierName', 'Local Supplier'),
+                "quote_data": quote
             }
         
+        print("⚠️ No real-time price returned. Using fallback.")
         return self._get_fallback_pricing(service, type_)
-
-    # New orchestrator action for confirming, generating link, and sending SMS
+    
     def _confirm_and_pay(self, booking_ref: str, customer_phone: str, amount: str) -> Dict[str, Any]:
         """
-        Confirms a booking, generates a payment link, and sends it via SMS.
+        Orchestrator: Confirms a booking, gets a payment link, and sends it via SMS.
         """
         if not all([booking_ref, customer_phone, amount]):
-            return {"success": False, "error": "Missing required parameters: booking_ref, customer_phone, and amount."}
+            return {"success": False, "error": "Missing required parameters."}
+        
+        print(f"📝 Confirming booking {booking_ref} and sending payment link.")
         
         # Step 1: Generate payment link by updating the booking
         payment_payload = {"action": "quote"}
@@ -167,12 +127,12 @@ class SMPAPITool(BaseTool):
         payment_link = None
         if payment_response and payment_response.get('success'):
             payment_link = payment_response['data'].get('quote', {}).get('paymentLink')
-
+        
         if not payment_link:
             return {"success": False, "error": "Failed to generate payment link from API."}
-
-        # Step 2: Send payment link via SMS using the SMSTool
-        sms_tool = SMSTool()
+        
+        # Step 2: Send payment link via SMS (assumes SMSTool is available)
+        sms_tool = SMSTool()  # Assumes SMSTool is correctly defined and imported
         sms_response = sms_tool._run(
             phone=customer_phone, 
             amount=amount, 
@@ -180,17 +140,20 @@ class SMPAPITool(BaseTool):
             payment_link=payment_link
         )
         
+        if not sms_response.get('success'):
+            return {"success": False, "error": "Failed to send SMS."}
+        
         return {
             "success": True,
-            "message": "Payment link sent successfully",
+            "message": "Booking confirmed and payment link sent successfully.",
             "booking_ref": booking_ref,
             "payment_link": payment_link,
-            "sms_sent": sms_response.get('success', False),
             "sms_details": sms_response
         }
-
-    # Helper methods
+    
     def _update_booking(self, booking_ref: str, update_data: Dict) -> Dict[str, Any]:
+        """Updates an existing booking with new data."""
+        # This method is used by other internal methods like _get_pricing and _confirm_and_pay.
         print(f"📝 Updating booking {booking_ref} with: {update_data}")
         headers = {
             "x-wasteking-request": self.access_token,
@@ -213,8 +176,9 @@ class SMPAPITool(BaseTool):
                 return {"success": False, "error": f"Update failed. Status: {response.status_code}"}
         except Exception as e:
             return {"success": False, "error": f"Update error: {str(e)}"}
-
+    
     def _get_fallback_pricing(self, service: str, type_: str) -> Dict[str, Any]:
+        """Fallback pricing when API fails"""
         print(f"💰 Using fallback pricing for {service} {type_}")
         fallback_prices = {
             "skip": {"4yard": "200", "6yard": "240", "8yard": "280", "12yard": "360"},
@@ -232,7 +196,8 @@ class SMPAPITool(BaseTool):
         }
 
     def _check_supplier_availability(self, postcode: str, service: str, type_: str, date: str = None) -> Dict[str, Any]:
-        pricing_result = self._get_price_with_booking(postcode=postcode, service=service, type_=type_)
+        """Checks supplier availability via a simulated call."""
+        pricing_result = self._get_pricing(postcode=postcode, service=service, type_=type_)
         if not pricing_result["success"]:
             return pricing_result
         supplier_phone = pricing_result["supplier_phone"]
@@ -248,6 +213,7 @@ class SMPAPITool(BaseTool):
         }
     
     def _call_supplier(self, supplier_phone: str, supplier_name: str, booking_ref: str, message: str) -> Dict[str, Any]:
+        """Simulates an actual call to a supplier."""
         test_phone = "07823656762"
         time.sleep(1)
         return {
