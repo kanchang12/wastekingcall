@@ -7,6 +7,7 @@ from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
 from wastekingcall.utils.rules_processor import RulesProcessor
 
+
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
