@@ -11,7 +11,6 @@ class SkipHireAgent:
         self.llm = llm
         self.tools = tools
         self.rules_processor = RulesProcessor()
-        
         rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
 
         self.prompt = ChatPromptTemplate.from_messages([
@@ -46,10 +45,10 @@ QUALIFICATION PROCESS:
 4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="CUSTOMER_POSTCODE", service="skip", type="SIZE_yd"
 
 WASTE TYPE RULES:
-- Heavy (soil, rubble, concrete, bricks) -> max 8yd
-- Light (household, garden, furniture, general, office) -> any size + suggest MAV if 8yd or smaller
-- Sofas -> refuse, suggest MAV
-- If 10+ yard requested for heavy -> use exact script
+- Heavy (soil, rubble, concrete, bricks) equals max 8yd
+- Light (household, garden, furniture, general, office) equals any size + suggest MAV if 8yd or smaller
+- Sofas equals refuse, suggest MAV
+- If 10+ yard requested for heavy equals use exact script
 
 WORKFLOW:
 1. Get pricing with smp_api action="get_pricing"
@@ -153,7 +152,7 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
                 size_num = size_map.get(size_word, size_word)
                 data['type'] = f"{size_num}yd"
                 break
-        
+
         if 'type' not in data:
             data['type'] = '8yd'  # Default
         
