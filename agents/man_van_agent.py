@@ -50,13 +50,21 @@ Always check: items list, access (stairs/ground floor), approximate volume. for 
     
     def process_message(self, message: str, context: Dict = None) -> str:
         try:
-            response = self.executor.invoke({
-                "input": message,
-                "context": json.dumps(context) if context else "{}"
-            })
+            # Pass context keys as part of the agent input so tools get them
+            agent_input = {
+                "input": message
+            }
+    
+            if context:
+                # flatten context dict into input for tools
+                for k, v in context.items():
+                    agent_input[k] = v  
+    
+            response = self.executor.invoke(agent_input)
             return response["output"]
         except Exception as e:
-            return "I understand. Let me help you with our man & van service. What items do you need collected?"
+            return "I understand. Let me help you with your skip hire needs. What's your postcode?"
+
     
     def check_transfer_required(self, items: str, access: str, office_hours: bool, amount: float = 0) -> Dict:
         heavy_keywords = ["soil", "concrete", "bricks", "rubble", "stone", "tiles"]
