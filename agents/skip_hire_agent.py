@@ -7,6 +7,7 @@ from langchain.prompts import ChatPromptTemplate
 from wastekingcall.utils.rules_processor import RulesProcessor
 
 
+
 class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
