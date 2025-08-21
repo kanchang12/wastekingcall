@@ -45,7 +45,7 @@ class SMPAPITool(BaseTool):
             response = requests.post(
                 f"{self.base_url}api/booking/create",
                 headers=headers,
-                json={"type": "Thomas", "source": "wasteking.co.uk"},
+                json={"type": "chatbot", "source": "wasteking.co.uk"},
                 timeout=15
             )
             
