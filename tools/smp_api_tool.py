@@ -18,7 +18,7 @@ class SMPAPITool(BaseTool):
             
             if action == "create_booking":
                 return self._create_booking()
-            elif action == "get_pricing":
+            elif action == "get_pricing" or action == "get_price":
                 return self._get_pricing(**kwargs)
             elif action == "call_supplier":
                 return self._call_supplier(**kwargs)
