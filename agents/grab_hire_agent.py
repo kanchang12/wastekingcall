@@ -35,9 +35,9 @@ QUALIFICATION PROCESS:
 4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="grab", type="8yd"
 
 MATERIAL RULES:
-- Heavy materials (soil, muck, rubble, hardcore) -> grab lorry ideal
-- Light materials (household waste) -> suggest skip or MAV instead
-- Mixed loads -> check access and tonnage
+- Heavy materials (soil, muck, rubble, hardcore)  grab lorry ideal
+- Light materials (household waste)  suggest skip or MAV instead
+- Mixed loads  check access and tonnage
 
 WORKFLOW:
 1. Get pricing with smp_api action="get_pricing"
@@ -69,7 +69,7 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, m
             max_iterations=3
         )
     
-    def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
+    def extract_and_validate_data(self, message: str)  Dict[str, Any]:
         """Extract customer data and check what's missing"""
         data = {}
         missing = []
@@ -175,7 +175,7 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, m
         data['missing_info'] = missing
         return data
     
-    def process_message(self, message: str, context: Dict = None) -> str:
+    def process_message(self, message: str, context: Dict = None)  str:
         extracted = self.extract_and_validate_data(message)
         
         # Create extracted info summary for the prompt
