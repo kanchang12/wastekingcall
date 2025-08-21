@@ -1,4 +1,4 @@
-import json
+import json 
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
@@ -17,15 +17,15 @@ class ManVanAgent:
 BUSINESS RULES:
 - Heavy materials = MUST transfer to specialist (soil, concrete, bricks, rubble)
 - Stairs/flats = MUST transfer to specialist
-- Office hours transfers only: £500+ to specialist
+- Office hours transfers only: Â£500+ to specialist
 - Out of hours: NEVER transfer, take callback
-- Rate: £30 per cubic yard
-- Minimum charge: £90
+- Rate: Â£30 per cubic yard
+- Minimum charge: Â£90
 
 TRANSFER CONDITIONS:
 - Heavy materials: "For heavy materials, I'll need to put you through to our specialist who can assess the requirements properly."
 - Stairs: "For properties with stairs, I'll connect you with our specialist who handles complex access situations."
-- High value (£500+ during office hours): Transfer to specialist
+- High value (Â£500+ during office hours): Transfer to specialist
 - Out of hours: "I'll take your details and have someone call you back during office hours."
 
 Always check: items list, access (stairs/ground floor), approximate volume.
