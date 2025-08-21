@@ -41,10 +41,10 @@ QUALIFICATION PROCESS:
 4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="CUSTOMER_POSTCODE", service="mav", type="SIZE_yd"
 
 VOLUME ESTIMATION:
-- Few items (1-3 bags, small furniture) → 4yd
-- Medium load (3-6 bags, some furniture) → 6yd  
-- Large load (6+ bags, multiple furniture) → 8yd
-- Very large (house clearance) → 12yd
+- Few items (1-3 bags, small furniture) -> 4yd
+- Medium load (3-6 bags, some furniture) -> 6yd  
+- Large load (6+ bags, multiple furniture) -> 8yd
+- Very large (house clearance) -> 12yd
 
 WORKFLOW:
 1. Get pricing with smp_api action="get_pricing"
