@@ -17,7 +17,7 @@ class GrabHireAgent:
 
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and RULE-FOLLOWING!
+            ("system", f"""You are the WasteKing Grab Hire specialist - friendly, British, and RULE-FOLLOWING!
 
 PERSONALITY - CRITICAL:
 - Start with: "Alright love!" or "Hello there!" or "Right then!" 
