@@ -128,8 +128,18 @@ NEVER ignore successful pricing responses. Always use the actual price returned.
     def process_message(self, message: str, context: Dict = None) -> str:
         extracted = self.extract_data(message)
         
+        # Include extracted data in the input message so the LLM can see it
+        enhanced_message = f"""Customer request: {message}
+
+Extracted data:
+- Postcode: {extracted.get('postcode', 'Not provided')}
+- Service: {extracted.get('service', 'skip')}
+- Skip size: {extracted.get('type_', '8yard')}
+
+Use this extracted data when calling smp_api for pricing."""
+
         agent_input = {
-            "input": message
+            "input": enhanced_message
         }
         
         if context:
