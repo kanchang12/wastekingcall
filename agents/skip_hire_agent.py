@@ -6,13 +6,12 @@ from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
 from utils.rules_processor import RulesProcessor
 
-
-
 class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
         self.rules_processor = RulesProcessor()
+        
         rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
 
         self.prompt = ChatPromptTemplate.from_messages([
@@ -36,12 +35,15 @@ EXACT SCRIPTS - Use word for word:
 - Sofa prohibition: "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service."
 - Road placement: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
 - MAV suggestion for light materials + 8yard or smaller: "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
-Follow all relevant rules from the team:\n{rule_text}
+
+Follow all relevant rules from the team:
+{rule_text}
+
 QUALIFICATION PROCESS:
 1. If missing NAME: "Hello! I'm here to help with your skip hire. What's your name?"
 2. If missing POSTCODE: "Lovely! And what's your postcode for delivery?"  
 3. If missing WASTE TYPE: "Perfect! What type of waste will you be putting in the skip?"
-4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="skip", type="{type}yd"
+4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="CUSTOMER_POSTCODE", service="skip", type="SIZE_yd"
 
 WASTE TYPE RULES:
 - Heavy (soil, rubble, concrete, bricks) → max 8yd
@@ -151,9 +153,7 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
                 size_num = size_map.get(size_word, size_word)
                 data['type'] = f"{size_num}yd"
                 break
-                
-
-
+        
         if 'type' not in data:
             data['type'] = '8yd'  # Default
         
