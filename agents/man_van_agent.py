@@ -27,8 +27,8 @@ PARAMETER EXTRACTION - CRITICAL:
 When calling smp_api for pricing, extract and pass these parameters:
 - postcode: Extract from "postcode LS14ED" format
 - waste_type: Extract items mentioned (books, clothes, dumbbells, etc)
-- skip_size: Use "8yd" format based on volume estimate
-- service_type: Use "mav"
+- skip_size: Use "8yard" format based on volume estimate
+- service_type: Use "man_van"
 
 Always collect: name, postcode, items list before pricing. for pricing always call get_pricing, no other word
 """),
