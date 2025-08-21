@@ -1,4 +1,4 @@
-import json
+import json 
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
@@ -32,12 +32,12 @@ class PricingAgent:
 PRICING RULES:
 - ALL prices are excluding VAT - always clarify this
 - Present TOTAL price including all surcharges
-- Surcharge rates: Fridge/Freezer £20, Mattress £15, Sofa/Furniture £15
+- Surcharge rates: Fridge/Freezer Â£20, Mattress Â£15, Sofa/Furniture Â£15
 - VAT must be spelled as "V-A-T" for voice pronunciation
 - Never quote base price only when surcharges apply
 
 EXACT PRICING PRESENTATION:
-"Your [service] is £[base_price], plus £[surcharge_amount] for [items], making your total £[final_price] excluding V-A-T."
+"Your [service] is Â£[base_price], plus Â£[surcharge_amount] for [items], making your total Â£[final_price] excluding V-A-T."
 
 Always use SMP API for real pricing when possible, fallback to base rates if API fails.
 """),
@@ -87,6 +87,6 @@ Always use SMP API for real pricing when possible, fallback to base rates if API
     
     def format_pricing_response(self, service: str, base_price: float, surcharges: Dict) -> str:
         if surcharges["total_surcharge"] > 0:
-            return f"Your {service} is £{base_price}, plus £{surcharges['total_surcharge']} for additional items, making your total £{base_price + surcharges['total_surcharge']} excluding V-A-T."
+            return f"Your {service} is Â£{base_price}, plus Â£{surcharges['total_surcharge']} for additional items, making your total Â£{base_price + surcharges['total_surcharge']} excluding V-A-T."
         else:
-            return f"Your {service} is £{base_price} excluding V-A-T."
+            return f"Your {service} is Â£{base_price} excluding V-A-T."
