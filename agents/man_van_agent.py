@@ -9,7 +9,6 @@ class ManVanAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        # Remove deprecated memory - use simple conversation tracking instead
         
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the WasteKing Man & Van specialist agent - friendly, chatty, and very British!
@@ -34,9 +33,11 @@ When calling smp_api for pricing, extract and pass these parameters:
 - action: "get_pricing"
 - postcode: Extract from "postcode LS14ED" format
 - service: Use "mav" for mav service  
-- type_: Use "8yrd" format based on volume estimate
+- type_: Use "8yard" format based on volume estimate
 
-Example: smp_api(action="get_pricing", postcode="LS14ED", service="man_and_van", type_="8yard")
+Example: smp_api(action="get_pricing", postcode="LS14ED", service="mav", type_="8yard")
+
+When you get a successful price response, USE IT! Don't ask for postcode again.
 
 Always be cheerful and helpful - make customers feel welcome and valued!
 """),
@@ -96,7 +97,7 @@ Always be cheerful and helpful - make customers feel welcome and valued!
             data['type_'] = '8yard'  # Default
         
         # Set service for SMP API
-        data['service'] = 'man_and_van'
+        data['service'] = 'mav'
         
         # Extract name
         name_match = re.search(r'name\s+(\w+)', message, re.IGNORECASE)
