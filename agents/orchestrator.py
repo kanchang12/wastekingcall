@@ -76,8 +76,6 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         extracted_data = self.extract_customer_data(message)
         state["customer_data"].update(extracted_data)
         
-        print(f"🎯 Persistent customer data: {state['customer_data']}")
-        
         state["conversation_history"].append({"type": "customer", "message": message})
         
         # Route to appropriate agent(s)
@@ -93,10 +91,12 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         
         print(f"🎯 Primary agent response: {primary_response}")
         
-        # Skip secondary agents if primary agent gave good response
-        if "£" in primary_response and len(primary_response) > 50:
+        # Skip secondary agents if primary agent gave good response with price
+        if "£" in primary_response and len(primary_response) > 30:
+            print(f"🎯 Primary agent gave good response with price, skipping secondary agents")
             final_response = primary_response
         else:
+            print(f"🎯 Primary response too short or no price, trying secondary agents")
             # Process with secondary agents if needed
             secondary_responses = {}
             for agent_name in routing_decision.get("secondary_agents", []):
