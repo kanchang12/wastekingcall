@@ -19,6 +19,8 @@ class SMPAPITool(BaseTool):
             
             if action == "get_pricing" or action == "get_price":
                 return self._get_pricing(**kwargs)
+            elif action == "get_current":
+                return self._get_current_offers(**kwargs)
             elif action == "confirm_and_pay":
                 return self._confirm_and_pay(**kwargs)
             elif action == "call_supplier":
@@ -191,6 +193,15 @@ class SMPAPITool(BaseTool):
             "fallback": True
         }
 
+    def _get_current_offers(self, **kwargs) -> Dict[str, Any]:
+        """Get current offers and promotions"""
+        return {
+            "success": True,
+            "current_offers": ["20% off first booking", "Free permit arrangement"],
+            "service_areas": ["Leeds", "Bradford", "York"],
+            "available_today": True
+        }
+
     def _check_supplier_availability(self, postcode: str, service: str, type_: str, date: str = None) -> Dict[str, Any]:
         """Checks supplier availability"""
         pricing_result = self._get_pricing(postcode=postcode, service=service, type_=type_)
@@ -217,9 +228,9 @@ class SMPAPITool(BaseTool):
         
         try:
             caller = ElevenLabsSupplierCaller(
-                elevenlabs_api_key=os.getenv('elevenlabs_api_key'),
-                agent_id=os.getenv('agent_id'),
-                agent_phone_number_id=os.getenv('agent_phone_number_id')
+                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
+                agent_id=os.getenv('ELEVENLABS_AGENT_ID'),
+                agent_phone_number_id=os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID')
             )
             
             booking_details = {
