@@ -7,7 +7,7 @@ from pathlib import Path
 
 class RulesProcessor:
     def __init__(self):
-        self.pdf_path = "data/rules/all_rules.pdf"
+        self.pdf_path = "data/rules/all rules.pdf"
         self.rules_data = self._load_all_rules()
     
     def _load_all_rules(self) -> Dict[str, Any]:
