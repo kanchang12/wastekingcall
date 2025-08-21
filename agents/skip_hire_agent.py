@@ -35,13 +35,18 @@ QUALIFICATION PROCESS:
 1. If missing NAME: "Hello! I'm here to help with your skip hire. What's your name?"
 2. If missing POSTCODE: "Lovely! And what's your postcode for delivery?"  
 3. If missing WASTE TYPE: "Perfect! What type of waste will you be putting in the skip?"
-4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="LS14ED", service="skip-hire", type_="8yard"
+4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="skip", type="{size}yd"
 
 WASTE TYPE RULES:
-- Heavy (soil, rubble, concrete, bricks) → max 8yard
-- Light (household, garden, furniture, general, office) → any size + suggest MAV if ≤8yard
+- Heavy (soil, rubble, concrete, bricks) → max 8yd
+- Light (household, garden, furniture, general, office) → any size + suggest MAV if ≤8yd
 - Sofas → refuse, suggest MAV
 - If 10+ yard requested for heavy → use exact script
+
+WORKFLOW:
+1. Get pricing with smp_api action="get_pricing"
+2. If customer wants to book, call smp_api action="create_booking_quote"
+3. For payment, call smp_api action="take_payment"
 
 NEVER skip qualification questions. NEVER call smp_api without name, postcode, waste type.
 """),
@@ -76,13 +81,12 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         for pattern in name_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
-                data['name'] = match.group(1).title()
-                print(f"🔍 Extracted name: {data['name']}")
+                data['firstName'] = match.group(1).title()
                 break
-        if 'name' not in data:
+        if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode - handle spaces correctly
+        # Extract postcode
         postcode_patterns = [
             r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
             r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
@@ -91,14 +95,11 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
                 pc = match.group(1).upper()
-                # Ensure proper spacing for UK postcodes
                 if len(pc.replace(' ', '')) >= 5:
                     if ' ' not in pc and len(pc) >= 6:
-                        # Add space before last 3 chars: LS14ED → LS1 4ED
                         data['postcode'] = pc[:-3] + ' ' + pc[-3:]
                     else:
                         data['postcode'] = pc
-                    print(f"🔍 Extracted postcode: {data['postcode']}")
                     break
         if 'postcode' not in data:
             missing.append('postcode')
@@ -124,7 +125,6 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         if found_waste:
             data['waste_type'] = ', '.join(found_waste)
             data['waste_category'] = waste_category
-            print(f"🔍 Extracted waste: {data['waste_type']} (category: {waste_category})")
         else:
             missing.append('waste_type')
         
@@ -143,14 +143,32 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
             if match:
                 size_word = match.group(1).lower()
                 size_num = size_map.get(size_word, size_word)
-                data['requested_size'] = f"{size_num}yard"
-                print(f"🔍 Extracted size: {data['requested_size']}")
+                data['type'] = f"{size_num}yd"
                 break
         
-        if 'requested_size' not in data:
-            data['requested_size'] = '8yard'  # Default
+        if 'type' not in data:
+            data['type'] = '8yd'  # Default
+        
+        # Extract phone
+        phone_patterns = [
+            r'phone\s+(?:is\s+)?(\d{11})',
+            r'mobile\s+(?:is\s+)?(\d{11})',
+            r'\b(\d{11})\b'
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, message)
+            if match:
+                data['phone'] = match.group(1)
+                break
+        
+        # Extract email
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        email_match = re.search(email_pattern, message)
+        if email_match:
+            data['emailAddress'] = email_match.group()
         
         data['missing_info'] = missing
+        data['service'] = 'skip'
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
@@ -158,11 +176,13 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         
         # Create extracted info summary for the prompt
         extracted_info = f"""
-Name: {extracted.get('name', 'NOT PROVIDED')}
+Name: {extracted.get('firstName', 'NOT PROVIDED')}
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Waste Type: {extracted.get('waste_type', 'NOT PROVIDED')}
 Waste Category: {extracted.get('waste_category', 'unknown')}
-Requested Size: {extracted.get('requested_size', '8yard')}
+Skip Size: {extracted.get('type', '8yd')}
+Phone: {extracted.get('phone', 'NOT PROVIDED')}
+Email: {extracted.get('emailAddress', 'NOT PROVIDED')}
 Missing Info: {extracted.get('missing_info', [])}
 """
         
