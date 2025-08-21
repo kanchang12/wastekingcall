@@ -11,43 +11,41 @@ class SkipHireAgent:
         self.tools = tools
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Skip Hire specialist agent - friendly, helpful, and very British!
+            ("system", """You are the WasteKing Skip Hire specialist - friendly, British, and RULE-FOLLOWING!
 
-TONE & PERSONALITY:
-- Be warm, jovial, and lively - this is the UK, people love a chat!
-- Use greetings like "Hello! How are you today?" 
-- Be polite, add humor where appropriate, have a laugh with customers
-- Say things like "Brilliant!", "Lovely!", "Right then!", "Perfect!"
-- Keep it friendly and conversational, not robotic
+PERSONALITY - CRITICAL:
+- Start with: "Alright love!" or "Hello there!" or "Right then!"
+- Use British phrases: "Brilliant!", "Lovely!", "Smashing!", "Perfect!"
+- Be chatty: "How's your day going?", "Lovely to hear from you!"
+- Sound human and warm, not robotic
 
-BUSINESS RULES:
-- For heavy materials (soil, rubble, concrete): MAX 8-yard skip
-- 12-yard skips ONLY for light materials
-- Sunday deliveries incur additional surcharge (check pricing)
-- If customer asks for 10+ yard for heavy materials, say exactly:
-  "For heavy materials such as soil & rubble, the largest skip you can have is 8-yard. Shall I get you the cost of an 8-yard skip?"
-- Sofas CANNOT go in skips - say exactly: "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service."
-- For road placement, use exact permit script: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
+BUSINESS RULES - FOLLOW EXACTLY:
+1. ALWAYS collect NAME, POSTCODE, WASTE TYPE before pricing
+2. For heavy materials (soil, rubble, concrete, bricks): MAX 8-yard skip
+3. 12-yard skips ONLY for light materials (household, garden, furniture)
+4. Sunday deliveries have surcharge
 
-PARAMETER EXTRACTION - CRITICAL:
-When calling smp_api for pricing, you MUST extract from the customer message and pass:
-- action: "get_pricing"
-- postcode: Extract from patterns like "for LS1 4ED" or "postcode LS14ED"  
-- service: Always use "skip" for skip hire
-- type_: Extract from "Eight yard skip" → "8yard", "Six yard" → "6yard", etc.
+EXACT SCRIPTS - Use word for word:
+- Heavy materials limit: "For heavy materials such as soil & rubble, the largest skip you can have is 8-yard. Shall I get you the cost of an 8-yard skip?"
+- Sofa prohibition: "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service."
+- Road placement: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
+- MAV suggestion for light materials + 8yard or smaller: "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
 
-EXAMPLE: Customer says "Eight yard skip for LS1 4ED"
-Call: smp_api(action="get_pricing", postcode="LS14ED", service="skip", type_="8yard")
+QUALIFICATION PROCESS:
+1. If missing NAME: "Hello! I'm here to help with your skip hire. What's your name?"
+2. If missing POSTCODE: "Lovely! And what's your postcode for delivery?"  
+3. If missing WASTE TYPE: "Perfect! What type of waste will you be putting in the skip?"
+4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="LS14ED", service="skip-hire", type_="8yard"
 
-When you call smp_api and get a successful response with a price, USE THAT PRICE in your response.
-DO NOT ask for postcode again if you already have it and got pricing.
+WASTE TYPE RULES:
+- Heavy (soil, rubble, concrete, bricks) → max 8yard
+- Light (household, garden, furniture, general, office) → any size + suggest MAV if ≤8yard
+- Sofas → refuse, suggest MAV
+- If 10+ yard requested for heavy → use exact script
 
-If smp_api returns: {{"success": True, "price": "£313.20", "postcode": "LS14ED"}}
-Then say: "Hello! The price for your 8-yard skip in LS14ED is £313.20. Would you like to proceed with booking?"
-
-NEVER ignore successful pricing responses. Always use the actual price returned.
+NEVER skip qualification questions. NEVER call smp_api without name, postcode, waste type.
 """),
-            ("human", "{input}"),
+            ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -61,111 +59,124 @@ NEVER ignore successful pricing responses. Always use the actual price returned.
             agent=self.agent,
             tools=self.tools,
             verbose=True,
-            max_iterations=3,
-            return_intermediate_steps=False
+            max_iterations=3
         )
     
-    def extract_data(self, message: str) -> Dict[str, str]:
+    def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
+        """Extract customer data and check what's missing"""
         data = {}
+        missing = []
         
-        # Extract postcode - handle "LS1 4ED" format
-        postcode_patterns = [
-            r'for\s+([A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2})',  # "for LS1 4ED"
-            r'postcode\s+([A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2})',  # "postcode LS14ED"
-            r'\b([A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2})\b'  # standalone postcode
+        # Extract name
+        name_patterns = [
+            r'name\s+(?:is\s+)?(\w+)',
+            r'i\'?m\s+(\w+)',
+            r'my\s+name\s+is\s+(\w+)'
         ]
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                data['name'] = match.group(1).title()
+                print(f"🔍 Extracted name: {data['name']}")
+                break
+        if 'name' not in data:
+            missing.append('name')
         
+        # Extract postcode - handle spaces correctly
+        postcode_patterns = [
+            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
+        ]
         for pattern in postcode_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
-                pc = match.group(1).upper().replace(' ', '')
-                data['postcode'] = pc
-                print(f"🔍 Extracted postcode: {pc}")
-                break
+                pc = match.group(1).upper()
+                # Ensure proper spacing for UK postcodes
+                if len(pc.replace(' ', '')) >= 5:
+                    if ' ' not in pc and len(pc) >= 6:
+                        # Add space before last 3 chars: LS14ED → LS1 4ED
+                        data['postcode'] = pc[:-3] + ' ' + pc[-3:]
+                    else:
+                        data['postcode'] = pc
+                    print(f"🔍 Extracted postcode: {data['postcode']}")
+                    break
+        if 'postcode' not in data:
+            missing.append('postcode')
         
-        # Extract skip size - handle "Eight yard skip"
+        # Extract waste type
+        waste_indicators = {
+            'heavy': ['soil', 'rubble', 'concrete', 'bricks', 'stone', 'hardcore', 'building'],
+            'light': ['household', 'general', 'office', 'party', 'garden', 'furniture', 'wood', 'cardboard'],
+            'prohibited': ['sofa', 'sofas', 'mattress', 'upholstered']
+        }
+        
+        found_waste = []
+        waste_category = None
+        
+        message_lower = message.lower()
+        for category, keywords in waste_indicators.items():
+            for keyword in keywords:
+                if keyword in message_lower:
+                    found_waste.append(keyword)
+                    waste_category = category
+                    break
+        
+        if found_waste:
+            data['waste_type'] = ', '.join(found_waste)
+            data['waste_category'] = waste_category
+            print(f"🔍 Extracted waste: {data['waste_type']} (category: {waste_category})")
+        else:
+            missing.append('waste_type')
+        
+        # Extract skip size
         size_patterns = [
-            r'(eight|8)\s*yard',
-            r'(six|6)\s*yard', 
-            r'(four|4)\s*yard',
-            r'(twelve|12)\s*yard'
+            r'(\d+)\s*(?:yard|yd)',
+            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:yard|yd)'
         ]
-        
         size_map = {
-            'eight': '8yard', '8': '8yard',
-            'six': '6yard', '6': '6yard', 
-            'four': '4yard', '4': '4yard',
-            'twelve': '12yard', '12': '12yard'
+            'four': '4', '4': '4', 'six': '6', '6': '6', 'eight': '8', '8': '8',
+            'ten': '10', '10': '10', 'twelve': '12', '12': '12', 'fourteen': '14', '14': '14'
         }
         
         for pattern in size_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
                 size_word = match.group(1).lower()
-                data['type_'] = size_map.get(size_word, '8yard')
-                print(f"🔍 Extracted skip size: {data['type_']}")
+                size_num = size_map.get(size_word, size_word)
+                data['requested_size'] = f"{size_num}yard"
+                print(f"🔍 Extracted size: {data['requested_size']}")
                 break
         
-        if 'type_' not in data:
-            data['type_'] = '8yard'  # Default
+        if 'requested_size' not in data:
+            data['requested_size'] = '8yard'  # Default
         
-        # Always set service for skip hire
-        data['service'] = 'skip'
-        
-        # Check for Sunday surcharge
-        if 'sunday' in message.lower():
-            data['sunday_delivery'] = True
-            print(f"🔍 Sunday delivery detected!")
-        
-        # Extract name
-        name_match = re.search(r'name\s+(\w+)', message, re.IGNORECASE)
-        if name_match:
-            data['name'] = name_match.group(1)
-            
-        print(f"🔍 Final extracted data: {data}")
+        data['missing_info'] = missing
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        extracted = self.extract_data(message)
+        extracted = self.extract_and_validate_data(message)
         
-        # Include extracted data in the input message so the LLM can see it
-        enhanced_message = f"""Customer request: {message}
-
-Extracted data:
-- Postcode: {extracted.get('postcode', 'Not provided')}
-- Service: {extracted.get('service', 'skip')}
-- Skip size: {extracted.get('type_', '8yard')}
-
-Use this extracted data when calling smp_api for pricing."""
-
+        # Create extracted info summary for the prompt
+        extracted_info = f"""
+Name: {extracted.get('name', 'NOT PROVIDED')}
+Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
+Waste Type: {extracted.get('waste_type', 'NOT PROVIDED')}
+Waste Category: {extracted.get('waste_category', 'unknown')}
+Requested Size: {extracted.get('requested_size', '8yard')}
+Missing Info: {extracted.get('missing_info', [])}
+"""
+        
         agent_input = {
-            "input": enhanced_message
+            "input": message,
+            "extracted_info": extracted_info
         }
         
         if context:
             for k, v in context.items():
                 agent_input[k] = v
                 
-        # Add extracted data
+        # Add extracted data for tools
         agent_input.update(extracted)
 
         response = self.executor.invoke(agent_input)
         return response["output"]
-
-    def check_heavy_materials(self, waste_type: str, skip_size: str) -> bool:
-        heavy_materials = ["soil", "rubble", "concrete", "bricks", "stone", "hardcore"]
-        large_sizes = ["10yd", "12yd", "14yd", "16yd"]
-        
-        has_heavy = any(material in waste_type.lower() for material in heavy_materials)
-        is_large = any(size in skip_size.lower() for size in large_sizes)
-        
-        return has_heavy and is_large
-    
-    def should_suggest_mav(self, waste_type: str, skip_size: str) -> bool:
-        light_materials = ["household", "garden", "furniture", "general", "mixed"]
-        small_sizes = ["4yd", "6yd", "8yd"]
-        
-        has_light = any(material in waste_type.lower() for material in light_materials)
-        is_small = any(size in skip_size.lower() for size in small_sizes)
-        
-        return has_light and is_small
