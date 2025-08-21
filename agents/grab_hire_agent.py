@@ -25,7 +25,7 @@ BUSINESS RULES:
 - Check postcode for access
 - Suitable for heavy materials (soil, concrete, muck)
 
-Transfer at £300+ during office hours only.
+Transfer at £300+ during office hours only. for pricing always call get_pricing, no other word
 """),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
