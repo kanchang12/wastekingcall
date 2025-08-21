@@ -9,6 +9,6 @@ twilio
 PyPDF2
 Flask
 gunicorn
-
+pydantic
 flask-cors
-
+elevenlabs
