@@ -12,24 +12,28 @@ class AgentOrchestrator:
         self.conversation_state = {}
         
         self.routing_prompt = PromptTemplate(
-            input_variables=["message", "conversation_history", "active_services"],
+            input_variables=["message", "conversation_history", "customer_data"],
             template="""Route this customer message to the appropriate WasteKing agent(s).
 
 Customer Message: {message}
 Conversation History: {conversation_history}
-Currently Active Services: {active_services}
+Current Customer Data: {customer_data}
 
 Available Agents:
-- skip_hire: Handle skip hire, container rental, waste bins
-- man_and_van: Handle collection services, clearance
-- grab_hire: Handle grab lorries, muck away services  
-- pricing: Handle pricing calculations, surcharges, VAT
+- data_collector: Handle initial data collection (name, postcode, phone, etc.).
+- skip_hire: Handle skip hire, container rental, waste bins.
+- man_and_van: Handle collection services, clearance.
+- grab_hire: Handle grab lorries, muck away services.
+- pricing: Handle pricing calculations, surcharges, VAT.
 
 Routing Rules:
-- If customer mentions specific service, route to that agent
-- If pricing mentioned, include pricing agent
-- If multiple services mentioned, route to multiple agents
-- If unclear, route to skip_hire as default
+- If customer data is incomplete, route to data_collector first.
+- If customer provides details (name, postcode, phone, etc.), route to data_collector to store the information.
+- Once all basic information is collected, route based on the service mentioned.
+- If customer mentions specific service, route to that agent.
+- If pricing is mentioned, include the pricing agent.
+- If multiple services are mentioned, route to multiple agents.
+- If unclear, route to skip_hire as default.
 
 Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "agent2"], "reasoning": "explanation"}}
 """
@@ -40,10 +44,8 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
     def process_customer_message(self, message: str, conversation_id: str) -> Dict[str, Any]:
         print(f"🎯 Orchestrator processing: {message}")
         
-        # Get conversation state
         if conversation_id not in self.conversation_state:
             self.conversation_state[conversation_id] = {
-                "active_services": [],
                 "customer_data": {},
                 "conversation_history": []
             }
@@ -51,11 +53,9 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         state = self.conversation_state[conversation_id]
         state["conversation_history"].append({"type": "customer", "message": message})
         
-        # Route to appropriate agent(s)
         routing_decision = self._route_message(message, state)
         print(f"🎯 Routing to: {routing_decision}")
         
-        # Process with primary agent
         primary_response = self._process_with_agent(
             routing_decision["primary_agent"], 
             message, 
@@ -64,7 +64,6 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         
         print(f"🎯 Primary agent response: {primary_response}")
         
-        # Process with secondary agents if needed
         secondary_responses = {}
         for agent_name in routing_decision.get("secondary_agents", []):
             secondary_responses[agent_name] = self._process_with_agent(
@@ -73,7 +72,6 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
                 state
             )
         
-        # Coordinate responses
         final_response = self._coordinate_responses(
             primary_response,
             secondary_responses,
@@ -92,16 +90,26 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         }
     
     def _route_message(self, message: str, state: Dict) -> Dict:
+        # Define the basic data fields we need to collect
+        required_data_fields = ["name", "postcode", "service_type", "waste_category", "amount", "phone_number"]
+        
+        # Check if all basic data has been collected
+        is_data_complete = all(field in state["customer_data"] for field in required_data_fields)
+        
+        # If data is incomplete, prioritize routing to the data_collector agent
+        if not is_data_complete:
+            return {"primary_agent": "data_collector", "secondary_agents": [], "reasoning": "Collecting initial customer data."}
+            
+        # If data is complete, proceed with regular routing based on the message
         try:
             routing_result = self.routing_chain.invoke({
                 "message": message,
                 "conversation_history": json.dumps(state["conversation_history"][-5:]),
-                "active_services": json.dumps(state["active_services"])
+                "customer_data": json.dumps(state["customer_data"])
             })
             return json.loads(routing_result["text"])
         except Exception as e:
             print(f"❌ Routing error: {e}")
-            # Simple keyword-based routing as fallback
             message_lower = message.lower()
             if any(word in message_lower for word in ["man", "van", "collection", "clearance"]):
                 return {"primary_agent": "man_and_van", "secondary_agents": [], "reasoning": "keyword_fallback"}
@@ -114,7 +122,6 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
     
     def _process_with_agent(self, agent_name: str, message: str, state: Dict) -> str:
         print(f"🤖 Processing with {agent_name} agent")
-        
         if agent_name in self.agents:
             try:
                 response = self.agents[agent_name].process_message(message, state)
@@ -128,36 +135,13 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
             return "I understand. How can I help you today?"
     
     def _coordinate_responses(self, primary: str, secondary: Dict, state: Dict) -> str:
-        # If no secondary responses, return primary
         if not secondary:
             return primary
-        
-        # If we have secondary responses, intelligently combine them
         all_responses = [primary]
         for agent_name, response in secondary.items():
             if response and response != primary:
                 all_responses.append(response)
-        
-        # Return the most comprehensive response or combine if needed
         if len(all_responses) == 1:
             return all_responses[0]
         else:
-            # Combine responses intelligently
             return " ".join(all_responses)
-    
-    def detect_services_in_message(self, message: str) -> List[str]:
-        message_lower = message.lower()
-        services = []
-        
-        skip_keywords = ["skip", "container", "bin", "yard", "disposal"]
-        mav_keywords = ["man and van", "collection", "clearance", "man & van"]
-        grab_keywords = ["grab", "lorry", "muck away", "wheeler"]
-        
-        if any(keyword in message_lower for keyword in skip_keywords):
-            services.append("skip_hire")
-        if any(keyword in message_lower for keyword in mav_keywords):
-            services.append("mav")
-        if any(keyword in message_lower for keyword in grab_keywords):
-            services.append("grab_hire")
-            
-        return services
