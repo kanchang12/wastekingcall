@@ -156,7 +156,7 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         if any(keyword in message_lower for keyword in skip_keywords):
             services.append("skip_hire")
         if any(keyword in message_lower for keyword in mav_keywords):
-            services.append("man_and_van")
+            services.append("mav")
         if any(keyword in message_lower for keyword in grab_keywords):
             services.append("grab_hire")
             
