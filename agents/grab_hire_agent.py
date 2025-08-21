@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
+from rules_processor import RulesProcessor 
 
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
