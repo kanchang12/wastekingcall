@@ -36,7 +36,7 @@ QUALIFICATION PROCESS:
 1. If missing NAME: "Hello! I'm here to help with your skip hire. What's your name?"
 2. If missing POSTCODE: "Lovely! And what's your postcode for delivery?"  
 3. If missing WASTE TYPE: "Perfect! What type of waste will you be putting in the skip?"
-4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="skip", type="{size}yd"
+4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="skip", type="{type}yd"
 
 WASTE TYPE RULES:
 - Heavy (soil, rubble, concrete, bricks) → max 8yd
