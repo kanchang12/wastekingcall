@@ -21,7 +21,7 @@ Currently Active Services: {active_services}
 
 Available Agents:
 - skip_hire: Handle skip hire, container rental, waste bins
-- man_and_van: Handle collection services, clearance
+- mav: Handle collection services, clearance
 - grab_hire: Handle grab lorries, muck away services  
 - pricing: Handle pricing calculations, surcharges, VAT
 
@@ -37,6 +37,31 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         
         self.routing_chain = LLMChain(llm=self.llm, prompt=self.routing_prompt)
     
+    def extract_customer_data(self, message: str) -> Dict[str, str]:
+        """Extract customer data that can be shared across agents"""
+        import re
+        data = {}
+        
+        # Extract postcode
+        postcode_match = re.search(r'postcode\s+([A-Z0-9]+)', message, re.IGNORECASE)
+        if postcode_match:
+            pc = postcode_match.group(1).upper()
+            # Only accept valid postcodes
+            if len(pc) <= 8 and not any(word in pc for word in ['DELTA', 'ECO', 'KO']):
+                data['postcode'] = pc
+        
+        # Extract name
+        name_match = re.search(r'name\s+(\w+)', message, re.IGNORECASE)
+        if name_match:
+            data['name'] = name_match.group(1)
+            
+        # Extract contact
+        contact_match = re.search(r'contact\s+(\d+)', message, re.IGNORECASE)
+        if contact_match:
+            data['contact'] = contact_match.group(1)
+            
+        return data
+    
     def process_customer_message(self, message: str, conversation_id: str) -> Dict[str, Any]:
         print(f"🎯 Orchestrator processing: {message}")
         
@@ -50,6 +75,10 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
         
         state = self.conversation_state[conversation_id]
         state["conversation_history"].append({"type": "customer", "message": message})
+        
+        # Extract and store customer data
+        extracted_data = self.extract_customer_data(message)
+        state["customer_data"].update(extracted_data)
         
         # Route to appropriate agent(s)
         routing_decision = self._route_message(message, state)
@@ -104,7 +133,7 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
             # Simple keyword-based routing as fallback
             message_lower = message.lower()
             if any(word in message_lower for word in ["man", "van", "collection", "clearance"]):
-                return {"primary_agent": "man_and_van", "secondary_agents": [], "reasoning": "keyword_fallback"}
+                return {"primary_agent": "mav", "secondary_agents": [], "reasoning": "keyword_fallback"}
             elif any(word in message_lower for word in ["grab", "lorry", "wheeler", "muck"]):
                 return {"primary_agent": "grab_hire", "secondary_agents": [], "reasoning": "keyword_fallback"}
             elif any(word in message_lower for word in ["price", "cost", "quote", "pricing"]):
