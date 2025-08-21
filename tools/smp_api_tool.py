@@ -50,10 +50,6 @@ class SMPAPITool(BaseTool):
                 verify=False
             )
             
-            print(f"📋 CREATE BOOKING RESPONSE:")
-            print(f"Status: {response.status_code}")
-            print(f"Response: {response.text}")
-            
             if response.status_code == 200:
                 booking_ref = response.json().get('bookingRef')
                 print(f"✅ Booking created: {booking_ref}")
@@ -64,25 +60,29 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": f"Booking creation error: {str(e)}"}
     
     def _get_pricing(self, postcode: str = "", service: str = "", type_: str = "", **kwargs) -> Dict[str, Any]:
-        """
-        Orchestrator: Gets a price by creating a temporary booking and updating it.
-        This does NOT confirm the booking.
-        """
+        """Get pricing from SMP API with caching"""
         print(f"💰 Getting pricing for {service} {type_} in {postcode}")
         
         if not postcode or not service:
             print("❌ Missing required parameters")
             return {"success": False, "error": "Missing postcode or service"}
         
-        # Step 1: Create a booking to get a booking reference
+        # Check cache first
+        cache_key = f"{postcode}_{service}_{type_}"
+        if hasattr(self, '_price_cache') and cache_key in self._price_cache:
+            cached = self._price_cache[cache_key]
+            print(f"⚡ Using cached price: {cached['price']}")
+            return cached
+        
+        # Create booking
         booking_result = self._create_booking()
         if not booking_result["success"]:
-            print("❌ Booking creation failed. Falling back to default pricing.")
+            print("❌ Booking creation failed. Using fallback pricing.")
             return self._get_fallback_pricing(service, type_)
         
         booking_ref = booking_result["booking_ref"]
         
-        # Step 2: Update the booking with search details to get a quote
+        # Update booking with search details
         search_payload = {
             "search": {
                 "postCode": postcode,
@@ -93,51 +93,43 @@ class SMPAPITool(BaseTool):
         update_result = self._update_booking(booking_ref, search_payload)
         
         if not update_result["success"]:
-            print("❌ Price update failed. Falling back to default pricing.")
+            print("❌ Price update failed. Using fallback pricing.")
             return self._get_fallback_pricing(service, type_)
         
         quote = update_result["data"].get('quote', {})
         price = quote.get('price', '0')
         
-        print(f"📋 FULL QUOTE RESPONSE:")
-        print(json.dumps(quote, indent=2))
-        
         if price and price != '0':
-            print(f"✅ Real-time price found: £{price}")
-            
-            # Handle missing supplier phone number
-            supplier_phone = quote.get('supplierPhone')
-            if not supplier_phone:
-                print("⚠️ No supplier phone in response, using fallback number")
-                supplier_phone = '07823656762'
-            
-            print(f"📞 Supplier phone: {supplier_phone}")
-            
-            return {
+            result = {
                 "success": True,
                 "booking_ref": booking_ref,
                 "price": price,
-                "supplier_phone": supplier_phone,
+                "supplier_phone": quote.get('supplierPhone', '07823656762'),
                 "supplier_name": quote.get('supplierName', 'Local Supplier'),
                 "quote_data": quote,
                 "postcode": postcode,
                 "service_type": service,
                 "skip_size": type_
             }
+            
+            # Cache the result
+            if not hasattr(self, '_price_cache'):
+                self._price_cache = {}
+            self._price_cache[cache_key] = result
+            
+            print(f"✅ Real-time price found: {price}")
+            return result
         
         print("⚠️ No real-time price returned. Using fallback.")
         return self._get_fallback_pricing(service, type_)
     
     def _confirm_and_pay(self, booking_ref: str, customer_phone: str, amount: str) -> Dict[str, Any]:
-        """
-        Orchestrator: Confirms a booking, gets a payment link, and sends it via SMS.
-        """
+        """Confirms a booking and gets payment link"""
         if not all([booking_ref, customer_phone, amount]):
             return {"success": False, "error": "Missing required parameters."}
         
         print(f"📝 Confirming booking {booking_ref} and sending payment link.")
         
-        # Step 1: Generate payment link by updating the booking
         payment_payload = {"action": "quote"}
         payment_response = self._update_booking(booking_ref, payment_payload)
         
@@ -156,7 +148,7 @@ class SMPAPITool(BaseTool):
         }
     
     def _update_booking(self, booking_ref: str, update_data: Dict) -> Dict[str, Any]:
-        """Updates an existing booking with new data."""
+        """Updates an existing booking with new data"""
         print(f"📝 Updating booking {booking_ref} with: {update_data}")
         headers = {
             "x-wasteking-request": self.access_token,
@@ -174,10 +166,6 @@ class SMPAPITool(BaseTool):
                 verify=False
             )
             
-            print(f"📋 UPDATE BOOKING RESPONSE:")
-            print(f"Status: {response.status_code}")
-            print(f"Response: {response.text}")
-            
             if response.status_code in [200, 201]:
                 print("✅ Booking updated successfully")
                 return {"success": True, "data": response.json()}
@@ -191,21 +179,20 @@ class SMPAPITool(BaseTool):
         print(f"💰 Using fallback pricing for {service} {type_}")
         fallback_prices = {
             "skip": {"4yard": "200", "6yard": "240", "8yard": "280", "12yard": "360"},
-            "man_and_van": {"2yard": "90", "4yard": "120", "6yard": "180", "8yard": "240", "10yard": "300"},
+            "mav": {"2yard": "90", "4yard": "120", "6yard": "180", "8yard": "240", "10yard": "300"},
             "grab": {"6wheeler": "300", "8wheeler": "400"}
         }
-        service_key = service.replace("_", "")
-        price = fallback_prices.get(service_key, {}).get(type_, "220")
+        price = fallback_prices.get(service, {}).get(type_, "220")
         return {
             "success": True,
-            "price": price,
+            "price": f"£{price}",
             "supplier_phone": "07823656762",
             "supplier_name": "WasteKing Local",
             "fallback": True
         }
 
     def _check_supplier_availability(self, postcode: str, service: str, type_: str, date: str = None) -> Dict[str, Any]:
-        """Checks supplier availability via a simulated call."""
+        """Checks supplier availability"""
         pricing_result = self._get_pricing(postcode=postcode, service=service, type_=type_)
         if not pricing_result["success"]:
             return pricing_result
@@ -222,14 +209,44 @@ class SMPAPITool(BaseTool):
         }
     
     def _call_supplier(self, supplier_phone: str, supplier_name: str, booking_ref: str, message: str) -> Dict[str, Any]:
-        """Simulates an actual call to a supplier."""
-        time.sleep(1)
-        return {
-            "success": True,
-            "call_made": True,
-            "supplier_name": supplier_name,
-            "phone_called": supplier_phone,
-            "booking_ref": booking_ref,
-            "call_status": "connected",
-            "message": f"Called {supplier_name} successfully"
-        }
+        """Makes actual call to supplier using ElevenLabs"""
+        import os
+        from elevenlabs_supplier_caller import ElevenLabsSupplierCaller
+        
+        print(f"📞 Calling supplier {supplier_phone}")
+        
+        try:
+            caller = ElevenLabsSupplierCaller(
+                elevenlabs_api_key=os.getenv('elevenlabs_api_key'),
+                agent_id=os.getenv('agent_id'),
+                agent_phone_number_id=os.getenv('agent_phone_number_id')
+            )
+            
+            booking_details = {
+                "booking_ref": booking_ref,
+                "supplier_name": supplier_name,
+                "message": message
+            }
+            
+            result = caller.call_supplier_from_smp_response(
+                {"success": True, "supplier_phone": supplier_phone}, 
+                booking_details
+            )
+            
+            return {
+                "success": result.get("success", False),
+                "call_made": True,
+                "supplier_name": supplier_name,
+                "phone_called": supplier_phone,
+                "booking_ref": booking_ref,
+                "conversation_id": result.get("conversation_id"),
+                "call_sid": result.get("call_sid"),
+                "message": f"Called {supplier_name} successfully"
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Call failed: {str(e)}",
+                "call_made": False
+            }
