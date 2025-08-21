@@ -12,10 +12,9 @@ class GrabHireAgent:
         self.tools = tools
         self.rules_processor = RulesProcessor()
         rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")  # Escape for f-string
 
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""You are the WasteKing Grab Hire specialist - friendly, British, and RULE-FOLLOWING!
+            ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and RULE-FOLLOWING!
 
 PERSONALITY - CRITICAL:
 - Start with: "Alright love!" or "Hello there!" or "Right then!" 
@@ -24,7 +23,7 @@ PERSONALITY - CRITICAL:
 - Sound human and warm, not robotic
 
 Follow all relevant rules from the team:
-{rule_text}
+""" + rule_text + """
 
 BUSINESS RULES - FOLLOW EXACTLY:
 1. ALWAYS collect NAME, POSTCODE, MATERIAL TYPE before pricing
