@@ -77,10 +77,11 @@ class SMPAPITool(BaseTool):
                     return self._get_fallback_pricing(service, type_)
             else:
                 print(f"❌ Flask API error: {response.status_code}")
-                return self._get_fallback_pricing(service, type_)
+                return {"success": False, "error": f"API error: {response.status_code}"}
                 
         except Exception as e:
             print(f"❌ Flask API call failed: {str(e)}")
+            return {"success": False, "error": f"API call failed: {str(e)}"}"❌ Flask API call failed: {str(e)}")
             return self._get_fallback_pricing(service, type_)
     
     def _confirm_and_pay(self, booking_ref: str = "", customer_phone: str = "", **kwargs) -> Dict[str, Any]:
@@ -123,20 +124,11 @@ class SMPAPITool(BaseTool):
         }
     
     def _get_fallback_pricing(self, service: str, type_: str) -> Dict[str, Any]:
-        """Fallback pricing when API fails"""
-        print(f"💰 Using fallback pricing for {service} {type_}")
-        fallback_prices = {
-            "skip": {"4yard": "200", "6yard": "240", "8yard": "280", "12yard": "360"},
-            "mav": {"2yard": "90", "4yard": "120", "6yard": "180", "8yard": "240", "10yard": "300"},
-            "grab": {"6wheeler": "300", "8wheeler": "400"}
-        }
-        price = fallback_prices.get(service, {}).get(type_, "220")
+        """NO FALLBACK PRICING - Always fail properly"""
+        print(f"❌ No fallback pricing allowed")
         return {
-            "success": True,
-            "price": f"£{price}",
-            "supplier_phone": "07823656762",
-            "supplier_name": "WasteKing Local",
-            "fallback": True
+            "success": False,
+            "error": f"Unable to get pricing for {service} {type_}. Please try again or contact support."
         }
 
     def _check_supplier_availability(self, postcode: str, service: str, type_: str, date: str = None) -> Dict[str, Any]:
