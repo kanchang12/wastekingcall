@@ -24,6 +24,7 @@ BUSINESS RULES - FOLLOW EXACTLY:
 2. For heavy materials (soil, rubble, concrete, bricks): MAX 8-yard skip
 3. 12-yard skips ONLY for light materials (household, garden, furniture)
 4. Sunday deliveries have surcharge
+check the time and never transfer the time during out of office hours never!!
 
 EXACT SCRIPTS - Use word for word:
 - Heavy materials limit: "For heavy materials such as soil & rubble, the largest skip you can have is 8-yard. Shall I get you the cost of an 8-yard skip?"
@@ -145,7 +146,10 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
                 size_num = size_map.get(size_word, size_word)
                 data['type'] = f"{size_num}yd"
                 break
-        
+                
+        if "type" in inputs and "size" not in inputs:
+            inputs["size"] = inputs.pop("type")
+
         if 'type' not in data:
             data['type'] = '8yd'  # Default
         
