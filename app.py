@@ -2,8 +2,7 @@ import os
 import json
 from datetime import datetime
 from flask import Flask, request, jsonify
-from langchain.llms import OpenAI
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 
 # Import our agents and components
 from agents.orchestrator import AgentOrchestrator
@@ -31,7 +30,7 @@ def initialize_system():
     
     # Initialize LLM
     llm = ChatOpenAI(
-        model_name="gpt-3.5-turbo",
+        model="gpt-3.5-turbo",
         temperature=0.1,
         openai_api_key=settings.OPENAI_API_KEY
     ) if settings.OPENAI_API_KEY else None
@@ -54,6 +53,8 @@ def initialize_system():
         DateTimeTool()
     ]
     
+    print(f"Initialized {len(tools)} tools")
+    
     # Initialize agents
     agents = {
         'skip_hire': SkipHireAgent(llm, tools),
@@ -62,12 +63,16 @@ def initialize_system():
         'pricing': PricingAgent(llm, tools)
     }
     
+    print(f"Initialized {len(agents)} agents")
+    
     # Initialize orchestrator
     orchestrator = AgentOrchestrator(llm, agents)
     
     # Initialize supporting components
     state_manager = StateManager(settings.DATABASE_PATH)
     rules_processor = RulesProcessor()
+    
+    print("System initialization complete")
     
     return {
         'orchestrator': orchestrator,
@@ -115,6 +120,9 @@ def process_customer_message():
         customer_message = data.get('customerquestion', '').strip()
         conversation_id = data.get('elevenlabs_conversation_id', f"conv_{int(datetime.now().timestamp())}")
         
+        print(f"Processing message: {customer_message}")
+        print(f"Conversation ID: {conversation_id}")
+        
         if not customer_message:
             return jsonify({
                 "success": False,
@@ -122,10 +130,13 @@ def process_customer_message():
             }), 400
         
         # Process message through orchestrator
+        print("Calling orchestrator...")
         result = system['orchestrator'].process_customer_message(
             message=customer_message,
             conversation_id=conversation_id
         )
+        
+        print(f"Orchestrator response: {result['response']}")
         
         return jsonify({
             "success": True,
@@ -137,6 +148,7 @@ def process_customer_message():
         })
         
     except Exception as e:
+        print(f"Error processing message: {str(e)}")
         return jsonify({
             "success": False,
             "message": "I understand. Let me connect you with our team who can help immediately.",
@@ -228,4 +240,4 @@ if __name__ == '__main__':
         print("System initialization failed - check configuration")
     
     port = int(os.environ.get("PORT", 5000))
-    app.run(debug=False, host='0.0.0.0', port=port)
+    app.run(debug=True, host='0.0.0.0', port=port)
