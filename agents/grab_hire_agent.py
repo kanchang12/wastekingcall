@@ -47,12 +47,21 @@ Transfer at £300+ during office hours only. for pricing always call get_pricing
     
     def process_message(self, message: str, context: Dict = None) -> str:
         try:
-            response = self.executor.invoke({
-                "input": message,
-                "context": json.dumps(context) if context else "{}"
-            })
+            # Pass context keys as part of the agent input so tools get them
+            agent_input = {
+                "input": message
+            }
+    
+            if context:
+                # flatten context dict into input for tools
+                for k, v in context.items():
+                    agent_input[k] = v  
+    
+            response = self.executor.invoke(agent_input)
             return response["output"]
         except Exception as e:
+            
+
             return "I understand you need grab hire. What size grab lorry do you need - 6-wheeler or 8-wheeler?"
     
     def get_grab_terminology(self, grab_type: str) -> str:
