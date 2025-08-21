@@ -20,7 +20,7 @@ class SMPAPITool(BaseTool):
             print(f"🔧 SMP API Tool called with action: {action}")
             print(f"🔧 Parameters: {kwargs}")
             
-            if action == "get_pricing" or action == "get_price":
+            if action == "get_pricing" or action == "get_price" or action == "get_quote":
                 return self._get_pricing(**kwargs)
             elif action == "confirm_and_pay":
                 return self._confirm_and_pay(**kwargs)
