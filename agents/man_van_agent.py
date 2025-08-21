@@ -11,37 +11,43 @@ class ManVanAgent:
         self.tools = tools
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Man & Van specialist agent - friendly, chatty, and very British!
+            ("system", """You are the WasteKing Man & Van specialist - friendly, British, and RULE-FOLLOWING!
 
-TONE & PERSONALITY:
-- Be warm, jovial, and lively - British people love a good chat!
-- Use greetings like "Hello there! How are you today?" 
-- Be polite, cheerful, have a laugh with customers
-- Say things like "Brilliant!", "Lovely!", "Right then!", "Perfect!", "Smashing!"
-- Keep it friendly and conversational, not robotic
+PERSONALITY - CRITICAL:
+- Start with: "Alright love!" or "Hello there!" or "Right then!" 
+- Use British phrases: "Brilliant!", "Lovely!", "Smashing!", "Perfect!"
+- Be chatty: "How's your day going?", "Lovely to hear from you!"
+- Sound human and warm, not robotic
 
-BUSINESS RULES:
-- Man & Van service includes collection and disposal
-- We do all the loading for customers
-- Pricing based on volume and item types
-- Heavy items (dumbbells, kettlebells) may have surcharges
-- Access charges apply for upper floors
-- Upholstered furniture requires special disposal (EA regulations)
+BUSINESS RULES - FOLLOW EXACTLY:
+1. ALWAYS collect NAME, POSTCODE, ITEMS LIST before pricing
+2. Man & Van includes collection AND disposal
+3. We do ALL the loading for customers
+4. Heavy items (dumbbells, kettlebells) may have surcharges
+5. Access charges for upper floors
+6. Upholstered furniture requires special disposal (EA regulations)
 
-PARAMETER EXTRACTION - CRITICAL:
-When calling smp_api for pricing, extract and pass these parameters:
-- action: "get_pricing"
-- postcode: Extract from "postcode LS14ED" format
-- service: Use "mav" for mav service  
-- type_: Use "8yard" format based on volume estimate
+QUALIFICATION PROCESS:
+1. If missing NAME: "Hello! I'm here to help with Man & Van. What's your name?"
+2. If missing POSTCODE: "Lovely! And what's your postcode for collection?"
+3. If missing ITEMS: "Perfect! What items do you need collected?"
+4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="LS14ED", service="mav", type_="8yard"
 
-Example: smp_api(action="get_pricing", postcode="LS14ED", service="mav", type_="8yard")
+VOLUME ESTIMATION:
+- Few items (1-3 bags, small furniture) → 4yard
+- Medium load (3-6 bags, some furniture) → 6yard  
+- Large load (6+ bags, multiple furniture) → 8yard
+- Very large (house clearance) → 12yard
 
-When you get a successful price response, USE IT! Don't ask for postcode again.
+RESPONSES:
+- Always confirm: "We'll do all the loading and disposal for you"
+- Mention surcharges upfront if heavy items
+- Explain EA regulations for upholstered furniture
+- Give clear next steps for booking
 
-Always be cheerful and helpful - make customers feel welcome and valued!
+NEVER skip qualification questions. NEVER call smp_api without name, postcode, items.
 """),
-            ("human", "{input}"),
+            ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -55,77 +61,161 @@ Always be cheerful and helpful - make customers feel welcome and valued!
             agent=self.agent,
             tools=self.tools,
             verbose=True,
-            max_iterations=3,
-            return_intermediate_steps=False
+            max_iterations=3
         )
     
-    def extract_data(self, message: str) -> Dict[str, str]:
+    def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
+        """Extract customer data and check what's missing"""
         data = {}
+        missing = []
         
-        # Extract postcode - only valid UK postcodes
-        postcode_patterns = [
-            r'postcode\s+([A-Z0-9]+)',
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b'
+        # Extract name
+        name_patterns = [
+            r'name\s+(?:is\s+)?(\w+)',
+            r'i\'?m\s+(\w+)',
+            r'my\s+name\s+is\s+(\w+)'
         ]
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                data['name'] = match.group(1).title()
+                print(f"🔍 Extracted name: {data['name']}")
+                break
+        if 'name' not in data:
+            missing.append('name')
         
+        # Extract postcode - handle spaces correctly
+        postcode_patterns = [
+            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
+        ]
         for pattern in postcode_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
-                pc = match.group(1).upper().replace(' ', '')
-                # Reject invalid postcodes like "LS14EKODELTA"
-                if len(pc) <= 8 and not any(word in pc for word in ['DELTA', 'ECO', 'KO']):
-                    data['postcode'] = pc
-                    print(f"🔍 Extracted postcode: {pc}")
+                pc = match.group(1).upper()
+                if len(pc.replace(' ', '')) >= 5:
+                    if ' ' not in pc and len(pc) >= 6:
+                        data['postcode'] = pc[:-3] + ' ' + pc[-3:]
+                    else:
+                        data['postcode'] = pc
+                    print(f"🔍 Extracted postcode: {data['postcode']}")
                     break
+        if 'postcode' not in data:
+            missing.append('postcode')
         
-        # Extract items (for info only, not used in SMP API)
-        items = []
-        item_keywords = ['books', 'clothes', 'dumbbells', 'kettlebell', 'furniture', 'sofa']
-        for item in item_keywords:
-            if item in message.lower():
-                items.append(item)
-        if items:
-            data['items_info'] = ', '.join(items)
+        # Extract items
+        common_items = [
+            'bags', 'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 
+            'books', 'clothes', 'dumbbells', 'kettlebell', 'boxes', 'appliances'
+        ]
         
-        # Extract volume and convert to type_ format
-        volume_match = re.search(r'(\w+)\s+cubic\s+yards?', message, re.IGNORECASE)
-        if volume_match:
-            volume_word = volume_match.group(1).lower()
-            volume_map = {'one': '4yard', 'two': '6yard', 'three': '8yard', 'four': '12yard'}
-            data['type_'] = volume_map.get(volume_word, '8yard')
+        found_items = []
+        message_lower = message.lower()
+        
+        for item in common_items:
+            if item in message_lower:
+                found_items.append(item)
+        
+        # Extract quantity indicators
+        quantity_indicators = []
+        quantity_patterns = [
+            r'(\d+)\s*(?:bags?|boxes?|items?)',
+            r'(few|several|many)\s*(?:bags?|boxes?|items?)',
+            r'(one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:bags?|boxes?|items?)'
+        ]
+        
+        for pattern in quantity_patterns:
+            matches = re.findall(pattern, message_lower)
+            quantity_indicators.extend(matches)
+        
+        if found_items or quantity_indicators:
+            items_desc = []
+            if quantity_indicators:
+                items_desc.extend(quantity_indicators)
+            if found_items:
+                items_desc.extend(found_items)
+            data['items'] = ', '.join(items_desc)
+            print(f"🔍 Extracted items: {data['items']}")
         else:
-            data['type_'] = '8yard'  # Default
+            missing.append('items')
         
-        # Set service for SMP API
-        data['service'] = 'mav'
-        
-        # Extract name
-        name_match = re.search(r'name\s+(\w+)', message, re.IGNORECASE)
-        if name_match:
-            data['name'] = name_match.group(1)
+        # Estimate volume based on items
+        volume_score = 0
+        if 'items' in data:
+            items_text = data['items'].lower()
+            # Count bags/boxes
+            bag_matches = re.findall(r'(\d+).*?bags?', items_text)
+            for match in bag_matches:
+                volume_score += int(match) if match.isdigit() else 3
             
-        # Extract contact
-        contact_match = re.search(r'contact\s+(\d+)', message, re.IGNORECASE)
-        if contact_match:
-            data['contact'] = contact_match.group(1)
+            # Add for furniture
+            furniture_items = ['sofa', 'chair', 'table', 'bed', 'mattress', 'appliances']
+            for item in furniture_items:
+                if item in items_text:
+                    volume_score += 5
+            
+            # Add for heavy items
+            heavy_items = ['dumbbells', 'kettlebell', 'weights']
+            for item in heavy_items:
+                if item in items_text:
+                    volume_score += 2
+                    data['has_heavy_items'] = True
         
-        print(f"🔍 Final extracted data: {data}")
+        # Convert volume score to skip size
+        if volume_score <= 3:
+            data['estimated_size'] = '4yard'
+        elif volume_score <= 8:
+            data['estimated_size'] = '6yard'
+        elif volume_score <= 15:
+            data['estimated_size'] = '8yard'
+        else:
+            data['estimated_size'] = '12yard'
+        
+        # Extract access information
+        access_keywords = ['floor', 'stairs', 'lift', 'ground', 'first', 'second', 'third']
+        access_info = []
+        for keyword in access_keywords:
+            if keyword in message_lower:
+                access_info.append(keyword)
+        
+        if access_info:
+            data['access_info'] = ', '.join(access_info)
+            # Check for upper floor charges
+            upper_floors = ['first', 'second', 'third', 'fourth', 'fifth']
+            if any(floor in message_lower for floor in upper_floors):
+                data['upper_floor_charge'] = True
+        
+        data['missing_info'] = missing
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        extracted = self.extract_data(message)
+        extracted = self.extract_and_validate_data(message)
+        
+        # Create extracted info summary for the prompt
+        extracted_info = f"""
+Name: {extracted.get('name', 'NOT PROVIDED')}
+Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
+Items: {extracted.get('items', 'NOT PROVIDED')}
+Estimated Size: {extracted.get('estimated_size', '8yard')}
+Heavy Items: {extracted.get('has_heavy_items', False)}
+Upper Floor: {extracted.get('upper_floor_charge', False)}
+Access Info: {extracted.get('access_info', 'none')}
+Missing Info: {extracted.get('missing_info', [])}
+"""
         
         agent_input = {
-            "input": message
+            "input": message,
+            "extracted_info": extracted_info,
+            "service": "mav",
+            "type_": extracted.get('estimated_size', '8yard')
         }
-
+        
         if context:
             for k, v in context.items():
                 agent_input[k] = v
-        
-        # Add extracted data to agent input so tools can access it
-        for k, v in extracted.items():
-            agent_input[k] = v
+                
+        # Add extracted data for tools
+        agent_input.update(extracted)
 
         response = self.executor.invoke(agent_input)
         return response["output"]
