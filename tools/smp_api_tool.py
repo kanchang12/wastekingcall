@@ -1,7 +1,6 @@
 import requests
 import json
 import time
-import re
 from typing import Dict, Any, Optional
 from langchain.tools import BaseTool
 from pydantic import Field
@@ -19,16 +18,14 @@ class SMPAPITool(BaseTool):
             
             if action == "get_pricing" or action == "get_price":
                 return self._get_pricing(**kwargs)
-            elif action == "get_current":
-                return self._get_current_offers(**kwargs)
             elif action == "confirm_and_pay":
                 return self._confirm_and_pay(**kwargs)
             elif action == "call_supplier":
                 return self._call_supplier(**kwargs)
             elif action == "check_supplier_availability":
                 return self._check_supplier_availability(**kwargs)
-            elif action == "update_booking":
-                return self._update_booking(**kwargs)
+            elif action == "get_current":
+                return self._get_current_offers(**kwargs)
             else:
                 print(f"❌ Unknown action: {action}")
                 return {"success": False, "error": f"Unknown action: {action}"}
@@ -36,145 +33,94 @@ class SMPAPITool(BaseTool):
             print(f"❌ SMP API Error: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _create_booking(self) -> Dict[str, Any]:
-        """Helper method: Creates a new booking and returns the booking reference."""
-        print("📞 Creating new booking...")
-        headers = {
-            "x-wasteking-request": self.access_token,
-            "Content-Type": "application/json"
-        }
-        try:
-            response = requests.post(
-                f"{self.base_url}api/booking/create",
-                headers=headers,
-                json={"type": "chatbot", "source": "wasteking.co.uk"},
-                timeout=15,
-                verify=False
-            )
-            
-            if response.status_code == 200:
-                booking_ref = response.json().get('bookingRef')
-                print(f"✅ Booking created: {booking_ref}")
-                return {"success": True, "booking_ref": booking_ref}
-            else:
-                return {"success": False, "error": f"Failed to create booking. Status: {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": f"Booking creation error: {str(e)}"}
-    
     def _get_pricing(self, postcode: str = "", service: str = "", type_: str = "", **kwargs) -> Dict[str, Any]:
-        """Get pricing from SMP API with caching"""
+        """Get pricing from your working Flask API"""
         print(f"💰 Getting pricing for {service} {type_} in {postcode}")
         
         if not postcode or not service:
             print("❌ Missing required parameters")
             return {"success": False, "error": "Missing postcode or service"}
         
-        # Check cache first
-        cache_key = f"{postcode}_{service}_{type_}"
-        if hasattr(self, '_price_cache') and cache_key in self._price_cache:
-            cached = self._price_cache[cache_key]
-            print(f"⚡ Using cached price: {cached['price']}")
-            return cached
-        
-        # Create booking
-        booking_result = self._create_booking()
-        if not booking_result["success"]:
-            print("❌ Booking creation failed. Using fallback pricing.")
-            return self._get_fallback_pricing(service, type_)
-        
-        booking_ref = booking_result["booking_ref"]
-        
-        # Update booking with search details
-        search_payload = {
-            "search": {
-                "postCode": postcode,
+        try:
+            # Call your actual working Flask API endpoint
+            api_url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/wasteking-get-price"
+            
+            payload = {
+                "postcode": postcode,
                 "service": service,
                 "type": type_ or "8yard"
             }
-        }
-        update_result = self._update_booking(booking_ref, search_payload)
-        
-        if not update_result["success"]:
-            print("❌ Price update failed. Using fallback pricing.")
-            return self._get_fallback_pricing(service, type_)
-        
-        quote = update_result["data"].get('quote', {})
-        price = quote.get('price', '0')
-        
-        if price and price != '0':
-            result = {
-                "success": True,
-                "booking_ref": booking_ref,
-                "price": price,
-                "supplier_phone": quote.get('supplierPhone', '07823656762'),
-                "supplier_name": quote.get('supplierName', 'Local Supplier'),
-                "quote_data": quote,
-                "postcode": postcode,
-                "service_type": service,
-                "skip_size": type_
-            }
             
-            # Cache the result
-            if not hasattr(self, '_price_cache'):
-                self._price_cache = {}
-            self._price_cache[cache_key] = result
-            
-            print(f"✅ Real-time price found: {price}")
-            return result
-        
-        print("⚠️ No real-time price returned. Using fallback.")
-        return self._get_fallback_pricing(service, type_)
-    
-    def _confirm_and_pay(self, booking_ref: str, customer_phone: str, amount: str) -> Dict[str, Any]:
-        """Confirms a booking and gets payment link"""
-        if not all([booking_ref, customer_phone, amount]):
-            return {"success": False, "error": "Missing required parameters."}
-        
-        print(f"📝 Confirming booking {booking_ref} and sending payment link.")
-        
-        payment_payload = {"action": "quote"}
-        payment_response = self._update_booking(booking_ref, payment_payload)
-        
-        payment_link = None
-        if payment_response and payment_response.get('success'):
-            payment_link = payment_response['data'].get('quote', {}).get('paymentLink')
-        
-        if not payment_link:
-            return {"success": False, "error": "Failed to generate payment link from API."}
-        
-        return {
-            "success": True,
-            "message": "Booking confirmed and payment link ready.",
-            "booking_ref": booking_ref,
-            "payment_link": payment_link
-        }
-    
-    def _update_booking(self, booking_ref: str, update_data: Dict) -> Dict[str, Any]:
-        """Updates an existing booking with new data"""
-        print(f"📝 Updating booking {booking_ref} with: {update_data}")
-        headers = {
-            "x-wasteking-request": self.access_token,
-            "Content-Type": "application/json"
-        }
-        payload = {"bookingRef": booking_ref}
-        payload.update(update_data)
-        
-        try:
             response = requests.post(
-                f"{self.base_url}api/booking/update/",
-                headers=headers,
+                api_url,
                 json=payload,
-                timeout=20,
-                verify=False
+                timeout=15
             )
             
-            if response.status_code in [200, 201]:
-                print("✅ Booking updated successfully")
-                return {"success": True, "data": response.json()}
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get("success"):
+                    print(f"✅ Real pricing from Flask API: {data.get('price')}")
+                    return {
+                        "success": True,
+                        "booking_ref": data.get("booking_ref"),
+                        "price": data.get("price"),
+                        "supplier_phone": data.get("real_supplier_phone", "07823656762"),
+                        "supplier_name": data.get("supplier_name", "Local Supplier"),
+                        "postcode": postcode,
+                        "service_type": service,
+                        "skip_size": type_
+                    }
+                else:
+                    print("❌ Flask API returned failure, using fallback")
+                    return self._get_fallback_pricing(service, type_)
             else:
-                return {"success": False, "error": f"Update failed. Status: {response.status_code}"}
+                print(f"❌ Flask API error: {response.status_code}")
+                return self._get_fallback_pricing(service, type_)
+                
         except Exception as e:
-            return {"success": False, "error": f"Update error: {str(e)}"}
+            print(f"❌ Flask API call failed: {str(e)}")
+            return self._get_fallback_pricing(service, type_)
+    
+    def _confirm_and_pay(self, booking_ref: str = "", customer_phone: str = "", **kwargs) -> Dict[str, Any]:
+        """Confirm booking and send SMS via your Flask API"""
+        if not booking_ref or not customer_phone:
+            return {"success": False, "error": "Missing booking_ref or customer_phone"}
+        
+        try:
+            # Call your actual Flask API for booking confirmation
+            api_url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/wasteking-confirm-booking"
+            
+            payload = {
+                "booking_ref": booking_ref,
+                "customer_phone": customer_phone
+            }
+            
+            response = requests.post(
+                api_url,
+                json=payload,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"✅ Booking confirmed and SMS sent: {data}")
+                return data
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Booking confirmation failed: {str(e)}"}
+    
+    def _get_current_offers(self, **kwargs) -> Dict[str, Any]:
+        """Get current offers and promotions"""
+        return {
+            "success": True,
+            "current_offers": ["20% off first booking", "Free permit arrangement"],
+            "service_areas": ["Leeds", "Bradford", "York"],
+            "available_today": True
+        }
     
     def _get_fallback_pricing(self, service: str, type_: str) -> Dict[str, Any]:
         """Fallback pricing when API fails"""
@@ -193,17 +139,8 @@ class SMPAPITool(BaseTool):
             "fallback": True
         }
 
-    def _get_current_offers(self, **kwargs) -> Dict[str, Any]:
-        """Get current offers and promotions"""
-        return {
-            "success": True,
-            "current_offers": ["20% off first booking", "Free permit arrangement"],
-            "service_areas": ["Leeds", "Bradford", "York"],
-            "available_today": True
-        }
-
     def _check_supplier_availability(self, postcode: str, service: str, type_: str, date: str = None) -> Dict[str, Any]:
-        """Checks supplier availability"""
+        """Check supplier availability"""
         pricing_result = self._get_pricing(postcode=postcode, service=service, type_=type_)
         if not pricing_result["success"]:
             return pricing_result
