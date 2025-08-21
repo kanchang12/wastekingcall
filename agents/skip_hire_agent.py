@@ -28,7 +28,7 @@ EXACT SCRIPTS - Use word for word:
 - Sofa prohibition: "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service. We charge extra due to EA regulations."
 - MAV suggestion: "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
 
-Always collect: name, postcode, waste type before pricing.
+Always collect: name, postcode, waste type before pricing. for pricing always call get_pricing, no other word
 """),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
