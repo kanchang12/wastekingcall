@@ -42,7 +42,7 @@ Call: smp_api(action="get_pricing", postcode="LS14ED", service="skip", type_="8y
 When you call smp_api and get a successful response with a price, USE THAT PRICE in your response.
 DO NOT ask for postcode again if you already have it and got pricing.
 
-If smp_api returns: {"success": True, "price": "£313.20", "postcode": "LS14ED"}
+If smp_api returns: {{"success": True, "price": "£313.20", "postcode": "LS14ED"}}
 Then say: "Hello! The price for your 8-yard skip in LS14ED is £313.20. Would you like to proceed with booking?"
 
 NEVER ignore successful pricing responses. Always use the actual price returned.
