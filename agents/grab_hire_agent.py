@@ -35,9 +35,9 @@ QUALIFICATION PROCESS:
 4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="grab", type="8yd"
 
 MATERIAL RULES:
-- Heavy materials (soil, muck, rubble, hardcore) → grab lorry ideal
-- Light materials (household waste) → suggest skip or MAV instead
-- Mixed loads → check access and tonnage
+- Heavy materials (soil, muck, rubble, hardcore) -> grab lorry ideal
+- Light materials (household waste) -> suggest skip or MAV instead
+- Mixed loads -> check access and tonnage
 
 WORKFLOW:
 1. Get pricing with smp_api action="get_pricing"
