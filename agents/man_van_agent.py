@@ -28,7 +28,7 @@ TRANSFER CONDITIONS:
 - High value (£500+ during office hours): Transfer to specialist
 - Out of hours: "I'll take your details and have someone call you back during office hours."
 
-Always check: items list, access (stairs/ground floor), approximate volume.
+Always check: items list, access (stairs/ground floor), approximate volume. for pricing always call get_pricing, no other word
 """),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
