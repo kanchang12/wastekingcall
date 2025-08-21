@@ -16,12 +16,14 @@ from tools.datetime_tool import DateTimeTool
 from utils.state_manager import StateManager
 from utils.rules_processor import RulesProcessor
 from config.settings import settings
-from langchain_openai import ChatOpenAI
+
 app = Flask(__name__)
 
 # Initialize components
 def initialize_system():
     '''Initialize the complete multi-agent system'''
+    
+    print("Loading rules from PDF...")
     
     # Validate configuration
     config_validation = settings.validate_configuration()
@@ -55,10 +57,10 @@ def initialize_system():
     
     print(f"Initialized {len(tools)} tools")
     
-    # Initialize agents
+    # Initialize agents - FIXED: using 'mav' not 'man_and_van'
     agents = {
         'skip_hire': SkipHireAgent(llm, tools),
-        'man_and_van': ManVanAgent(llm, tools),
+        'mav': ManVanAgent(llm, tools),
         'grab_hire': GrabHireAgent(llm, tools),
         'pricing': PricingAgent(llm, tools)
     }
