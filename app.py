@@ -16,7 +16,7 @@ from tools.datetime_tool import DateTimeTool
 from utils.state_manager import StateManager
 from utils.rules_processor import RulesProcessor
 from config.settings import settings
-
+from langchain_openai import ChatOpenAI
 app = Flask(__name__)
 
 # Initialize components
