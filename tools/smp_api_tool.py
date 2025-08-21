@@ -63,7 +63,7 @@ def _get_pricing(self, postcode: str = "", service: str = "", type_: str = "", *
                     "supplier_name": data.get("supplier_name", "Local Supplier"),
                     "postcode": postcode,
                     "service_type": service,
-                    "skip_size": type_
+                    "type": type_
                 }
             else:
                 print("❌ Flask API returned failure, using fallback")
