@@ -31,13 +31,18 @@ QUALIFICATION PROCESS:
 1. If missing NAME: "Hello! I'm here to help with Man & Van. What's your name?"
 2. If missing POSTCODE: "Lovely! And what's your postcode for collection?"
 3. If missing ITEMS: "Perfect! What items do you need collected?"
-4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="LS14ED", service="mav", type_="8yard"
+4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="mav", type="{size}yd"
 
 VOLUME ESTIMATION:
-- Few items (1-3 bags, small furniture) → 4yard
-- Medium load (3-6 bags, some furniture) → 6yard  
-- Large load (6+ bags, multiple furniture) → 8yard
-- Very large (house clearance) → 12yard
+- Few items (1-3 bags, small furniture) → 4yd
+- Medium load (3-6 bags, some furniture) → 6yd  
+- Large load (6+ bags, multiple furniture) → 8yd
+- Very large (house clearance) → 12yd
+
+WORKFLOW:
+1. Get pricing with smp_api action="get_pricing"
+2. If customer wants to book, call smp_api action="create_booking_quote"
+3. For payment, call smp_api action="take_payment"
 
 RESPONSES:
 - Always confirm: "We'll do all the loading and disposal for you"
@@ -78,13 +83,12 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, i
         for pattern in name_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
-                data['name'] = match.group(1).title()
-                print(f"🔍 Extracted name: {data['name']}")
+                data['firstName'] = match.group(1).title()
                 break
-        if 'name' not in data:
+        if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode - handle spaces correctly
+        # Extract postcode
         postcode_patterns = [
             r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
             r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
@@ -98,7 +102,6 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, i
                         data['postcode'] = pc[:-3] + ' ' + pc[-3:]
                     else:
                         data['postcode'] = pc
-                    print(f"🔍 Extracted postcode: {data['postcode']}")
                     break
         if 'postcode' not in data:
             missing.append('postcode')
@@ -106,11 +109,19 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, i
         # Extract items
         common_items = [
             'bags', 'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 
-            'books', 'clothes', 'dumbbells', 'kettlebell', 'boxes', 'appliances'
+            'books', 'clothes', 'dumbbells', 'kettlebell', 'boxes', 'appliances',
+            'fridge', 'freezer'
         ]
         
         found_items = []
+        extra_items = []
         message_lower = message.lower()
+        
+        # Check for extra items that incur surcharges
+        surcharge_items = ['fridge', 'freezer', 'mattress', 'sofa', 'furniture']
+        for item in surcharge_items:
+            if item in message_lower:
+                extra_items.append(item)
         
         for item in common_items:
             if item in message_lower:
@@ -135,9 +146,11 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, i
             if found_items:
                 items_desc.extend(found_items)
             data['items'] = ', '.join(items_desc)
-            print(f"🔍 Extracted items: {data['items']}")
         else:
             missing.append('items')
+        
+        if extra_items:
+            data['extra_items'] = ','.join(extra_items)
         
         # Estimate volume based on items
         volume_score = 0
@@ -161,15 +174,15 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, i
                     volume_score += 2
                     data['has_heavy_items'] = True
         
-        # Convert volume score to skip size
+        # Convert volume score to size
         if volume_score <= 3:
-            data['estimated_size'] = '4yard'
+            data['type'] = '4yd'
         elif volume_score <= 8:
-            data['estimated_size'] = '6yard'
+            data['type'] = '6yd'
         elif volume_score <= 15:
-            data['estimated_size'] = '8yard'
+            data['type'] = '8yd'
         else:
-            data['estimated_size'] = '12yard'
+            data['type'] = '12yd'
         
         # Extract access information
         access_keywords = ['floor', 'stairs', 'lift', 'ground', 'first', 'second', 'third']
@@ -185,7 +198,26 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, i
             if any(floor in message_lower for floor in upper_floors):
                 data['upper_floor_charge'] = True
         
+        # Extract phone
+        phone_patterns = [
+            r'phone\s+(?:is\s+)?(\d{11})',
+            r'mobile\s+(?:is\s+)?(\d{11})',
+            r'\b(\d{11})\b'
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, message)
+            if match:
+                data['phone'] = match.group(1)
+                break
+        
+        # Extract email
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        email_match = re.search(email_pattern, message)
+        if email_match:
+            data['emailAddress'] = email_match.group()
+        
         data['missing_info'] = missing
+        data['service'] = 'mav'
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
@@ -193,21 +225,22 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, i
         
         # Create extracted info summary for the prompt
         extracted_info = f"""
-Name: {extracted.get('name', 'NOT PROVIDED')}
+Name: {extracted.get('firstName', 'NOT PROVIDED')}
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Items: {extracted.get('items', 'NOT PROVIDED')}
-Estimated Size: {extracted.get('estimated_size', '8yard')}
+Estimated Size: {extracted.get('type', '8yd')}
+Extra Items: {extracted.get('extra_items', 'none')}
 Heavy Items: {extracted.get('has_heavy_items', False)}
 Upper Floor: {extracted.get('upper_floor_charge', False)}
 Access Info: {extracted.get('access_info', 'none')}
+Phone: {extracted.get('phone', 'NOT PROVIDED')}
+Email: {extracted.get('emailAddress', 'NOT PROVIDED')}
 Missing Info: {extracted.get('missing_info', [])}
 """
         
         agent_input = {
             "input": message,
-            "extracted_info": extracted_info,
-            "service": "mav",
-            "type_": extracted.get('estimated_size', '8yard')
+            "extracted_info": extracted_info
         }
         
         if context:
