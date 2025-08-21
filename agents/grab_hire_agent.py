@@ -3,6 +3,7 @@ import re
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
+
 from langchain.prompts import ChatPromptTemplate
 from rules_processor import RulesProcessor 
 
@@ -10,6 +11,7 @@ class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
+        self.rules_processor = RulesProcessor()
 
         rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
 
