@@ -4,13 +4,13 @@ from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-from langchain.memory import ConversationBufferWindowMemory
 
 class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        self.memory = ConversationBufferWindowMemory(k=10, return_messages=True)
+        # Remove deprecated memory - use simple conversation tracking instead
+        # self.memory = ConversationBufferWindowMemory(k=10, return_messages=True)
         
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the WasteKing Skip Hire specialist agent.
@@ -56,9 +56,9 @@ DO NOT call smp_api with empty parameters!
         self.executor = AgentExecutor(
             agent=self.agent,
             tools=self.tools,
-            memory=self.memory,
             verbose=True,
-            max_iterations=3
+            max_iterations=3,
+            return_intermediate_steps=False
         )
     
     def extract_data(self, message: str) -> Dict[str, str]:
