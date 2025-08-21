@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-from ..utils.rules_processor import RulesProcessor
+from utils.rules_processor import RulesProcessor
 
 
 
