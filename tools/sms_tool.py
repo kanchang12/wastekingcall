@@ -1,4 +1,4 @@
-import re
+import re 
 from typing import Dict, Any
 from langchain.tools import BaseTool
 from pydantic import Field
@@ -41,7 +41,7 @@ class SMSTool(BaseTool):
         client = Client(self.account_sid, self.auth_token)
         
         message_body = f"""Waste King Payment
-Amount: £{amount}
+Amount: Â£{amount}
 Reference: {booking_ref}
 
 Pay securely: {payment_link}
