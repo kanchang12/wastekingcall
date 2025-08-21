@@ -46,10 +46,10 @@ QUALIFICATION PROCESS:
 4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="CUSTOMER_POSTCODE", service="skip", type="SIZE_yd"
 
 WASTE TYPE RULES:
-- Heavy (soil, rubble, concrete, bricks) → max 8yd
-- Light (household, garden, furniture, general, office) → any size + suggest MAV if ≤8yd
-- Sofas → refuse, suggest MAV
-- If 10+ yard requested for heavy → use exact script
+- Heavy (soil, rubble, concrete, bricks) -> max 8yd
+- Light (household, garden, furniture, general, office) -> any size + suggest MAV if 8yd or smaller
+- Sofas -> refuse, suggest MAV
+- If 10+ yard requested for heavy -> use exact script
 
 WORKFLOW:
 1. Get pricing with smp_api action="get_pricing"
