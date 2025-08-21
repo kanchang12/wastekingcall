@@ -1,6 +1,52 @@
-import json
+def process_customer_message(self, message: str, conversation_id: str) -> Dict[str, Any]:
+        print(f"🎯 Orchestrator processing: {message}")
+        
+        # Get conversation state and ensure customer_data exists
+        if conversation_id not in self.conversation_state:
+            self.conversation_state[conversation_id] = {
+                "active_services": [],
+                "customer_data": {},  
+                "conversation_history": []
+            }
+        
+        state = self.conversation_state[conversation_id]
+        
+        # Extract and PERSIST customer data across messages
+        extracted_data = self.extract_customer_data(message)
+        state["customer_data"].update(extracted_data)
+        
+        print(f"🎯 Persistent customer data: {state['customer_data']}")
+        
+        state["conversation_history"].append({"type": "customer", "message": message})
+        
+        # Route to appropriate agent(s)
+        routing_decision = self._route_message(message, state)
+        print(f"🎯 Routing to: {routing_decision}")
+        
+        # Process with primary agent, passing the PERSISTENT customer_data
+        primary_response = self._process_with_agent(
+            routing_decision["primary_agent"], 
+            message, 
+            state
+        )
+        
+        print(f"🎯 Primary agent response: {primary_response}")
+        
+        # Skip secondary agents if primary agent gave good response
+        if "£" in primary_response and len(primary_response) > 50:
+            final_response = primary_response
+        else:
+            # Process with secondary agents if needed
+            secondary_responses = {}
+            for agent_name in routing_decision.get("secondary_agents", []):
+                secondary_responses[agent_name] = self._process_with_agent(
+                    agent_name, 
+                    message, 
+                    state
+                )
+            
+            # Coordinateimport json
 from typing import Dict, Any, List, Optional
-from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferWindowMemory
 
@@ -35,7 +81,7 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
 """
         )
         
-        self.routing_chain = LLMChain(llm=self.llm, prompt=self.routing_prompt)
+        self.routing_chain = self.routing_prompt | self.llm
     
     def extract_customer_data(self, message: str) -> Dict[str, str]:
         """Extract customer data that can be shared across agents"""
@@ -127,7 +173,12 @@ Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "ag
                 "conversation_history": json.dumps(state["conversation_history"][-5:]),
                 "active_services": json.dumps(state["active_services"])
             })
-            return json.loads(routing_result["text"])
+            
+            # Handle the new format - routing_result is now a string, not dict with "text" key
+            if isinstance(routing_result, str):
+                return json.loads(routing_result)
+            else:
+                return json.loads(routing_result.content)
         except Exception as e:
             print(f"❌ Routing error: {e}")
             # Simple keyword-based routing as fallback
