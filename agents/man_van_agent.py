@@ -31,7 +31,7 @@ QUALIFICATION PROCESS:
 1. If missing NAME: "Hello! I'm here to help with Man & Van. What's your name?"
 2. If missing POSTCODE: "Lovely! And what's your postcode for collection?"
 3. If missing ITEMS: "Perfect! What items do you need collected?"
-4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="mav", type="{size}yd"
+4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="{postcode}", service="mav", type="{type}yd"
 
 VOLUME ESTIMATION:
 - Few items (1-3 bags, small furniture) → 4yd
