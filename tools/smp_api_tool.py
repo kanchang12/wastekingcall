@@ -1,12 +1,14 @@
 import requests
 import json
+import os
 from typing import Dict, Any, Optional
 from langchain.tools import BaseTool
 from pydantic import Field
+from agents.elevenlabs_supplier_caller import ElevenLabsSupplierCaller
 
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
-    description: str = "WasteKing API for pricing, booking quotes, and payment processing"
+    description: str = "WasteKing API for pricing, booking quotes, payment processing, and supplier calling"
     base_url: str = Field(default="https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/")
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
@@ -20,62 +22,67 @@ class SMPAPITool(BaseTool):
                 return self._create_booking_quote(**kwargs)
             elif action == "take_payment":
                 return self._take_payment(**kwargs)
+            elif action == "call_supplier":
+                return self._call_supplier(**kwargs)
+            elif action == "check_supplier_availability":
+                return self._check_supplier_availability(**kwargs)
             else:
                 return {"success": False, "error": f"Unknown action: {action}"}
         except Exception as e:
             print(f"❌ SMP API Error: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _get_pricing(self, postcode: str = "", service: str = "", type_: str = "", **kwargs) -> Dict[str, Any]:
-        """Get pricing from your working Flask API"""
-        print(f"💰 Getting pricing for {service} {type_} in {postcode}")
+    def _get_pricing(self, postcode: str, service: str, type: str, **kwargs) -> Dict[str, Any]:
+        """Get pricing from wasteking-get-price endpoint"""
+        print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
-        if not postcode or not service:
-            print("❌ Missing required parameters")
-            return {"success": False, "error": "Missing postcode or service"}
+        if not all([postcode, service, type]):
+            return {"success": False, "error": "Missing required fields: postcode, service, type"}
         
         try:
-            # Call your actual working Flask API endpoint
-            api_url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/wasteking-get-price"
-            
             payload = {
                 "postcode": postcode,
                 "service": service,
-                "type": type_ or "8yard"
+                "type": type,
+                # Optional fields
+                "address1": kwargs.get("address1", ""),
+                "imageUrl": kwargs.get("imageUrl", ""),
+                "firstName": kwargs.get("firstName", ""),
+                "address2": kwargs.get("address2", ""),
+                "lastName": kwargs.get("lastName", ""),
+                "supplement_code": kwargs.get("supplement_code", ""),
+                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", ""),
+                "call_sid": kwargs.get("call_sid", ""),
+                "addressPostcode": kwargs.get("addressPostcode", ""),
+                "addressCity": kwargs.get("addressCity", ""),
+                "collection": kwargs.get("collection", ""),
+                "placement": kwargs.get("placement", ""),
+                "notes": kwargs.get("notes", ""),
+                "agent_name": kwargs.get("agent_name", ""),
+                "date": kwargs.get("date", ""),
+                "supplement_qty": kwargs.get("supplement_qty", ""),
+                "phone": kwargs.get("phone", ""),
+                "time": kwargs.get("time", ""),
+                "addressCounty": kwargs.get("addressCounty", ""),
+                "emailAddress": kwargs.get("emailAddress", "")
             }
             
             response = requests.post(
-                api_url,
+                f"{self.base_url}wasteking-get-price",
                 json=payload,
-                timeout=15
+                timeout=30
             )
             
             if response.status_code == 200:
                 data = response.json()
-                
-                if data.get("success"):
-                    print(f"✅ Real pricing from Flask API: {data.get('price')}")
-                    return {
-                        "success": True,
-                        "booking_ref": data.get("booking_ref"),
-                        "price": data.get("price"),
-                        "supplier_phone": data.get("real_supplier_phone", "07823656762"),
-                        "supplier_name": data.get("supplier_name", "Local Supplier"),
-                        "postcode": postcode,
-                        "service_type": service,
-                        "type": type_
-                    }
-                else:
-                    print("❌ Flask API returned failure, using fallback")
-                    return self._get_fallback_pricing(service, type_)
+                print(f"✅ Pricing response: {data}")
+                return data
             else:
-                print(f"❌ Flask API error: {response.status_code}")
                 return {"success": False, "error": f"API error: {response.status_code}"}
                 
         except Exception as e:
-            print(f"❌ Flask API call failed: {str(e)}")
-            return {"success": False, "error": f"API call failed: {str(e)}"}
-
+            return {"success": False, "error": f"Pricing request failed: {str(e)}"}
+    
     def _create_booking_quote(self, type: str, service: str, postcode: str, **kwargs) -> Dict[str, Any]:
         """Create booking quote with payment link"""
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
@@ -148,3 +155,103 @@ class SMPAPITool(BaseTool):
                 
         except Exception as e:
             return {"success": False, "error": f"Payment processing failed: {str(e)}"}
+    
+    def _call_supplier(self, supplier_phone: str, supplier_name: str, booking_ref: str, message: str, **kwargs) -> Dict[str, Any]:
+        """Makes actual call to supplier using ElevenLabs"""
+        print(f"📞 Calling supplier {supplier_phone}")
+        
+        try:
+            caller = ElevenLabsSupplierCaller(
+                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
+                agent_id=os.getenv('ELEVENLABS_AGENT_ID'),
+                agent_phone_number_id=os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID')
+            )
+            
+            # Create booking details for the call
+            booking_details = {
+                "booking_ref": booking_ref,
+                "supplier_name": supplier_name,
+                "message": message,
+                "customer_name": kwargs.get("customer_name", ""),
+                "customer_contact": kwargs.get("customer_phone", "")
+            }
+            
+            # Create SMP response format for the caller
+            smp_response = {
+                "success": True, 
+                "supplier_phone": supplier_phone,
+                "service_type": kwargs.get("service", ""),
+                "postcode": kwargs.get("postcode", ""),
+                "price": kwargs.get("price", ""),
+                "booking_ref": booking_ref
+            }
+            
+            result = caller.call_supplier_from_smp_response(smp_response, booking_details)
+            
+            return {
+                "success": result.get("success", False),
+                "call_made": True,
+                "supplier_name": supplier_name,
+                "phone_called": supplier_phone,
+                "booking_ref": booking_ref,
+                "conversation_id": result.get("conversation_id"),
+                "call_sid": result.get("call_sid"),
+                "message": f"Called {supplier_name} successfully" if result.get("success") else f"Call failed: {result.get('error', 'Unknown error')}"
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Call failed: {str(e)}",
+                "call_made": False
+            }
+    
+    def _check_supplier_availability(self, postcode: str, service: str, type_: str, date: str = None, **kwargs) -> Dict[str, Any]:
+        """Check supplier availability and call them if needed"""
+        # First get pricing to get supplier details
+        pricing_result = self._get_pricing(postcode=postcode, service=service, type_=type_, **kwargs)
+        
+        if not pricing_result.get("success"):
+            return pricing_result
+        
+        supplier_phone = pricing_result.get("supplier_phone")
+        supplier_name = pricing_result.get("supplier_name")
+        
+        if not supplier_phone:
+            return {"success": False, "error": "No supplier phone number available"}
+        
+        # Call supplier to check availability
+        try:
+            caller = ElevenLabsSupplierCaller(
+                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
+                agent_id=os.getenv('ELEVENLABS_AGENT_ID'),
+                agent_phone_number_id=os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID')
+            )
+            
+            call_result = caller.call_supplier_for_availability(
+                supplier_phone="07823656907",
+                service_type=service,
+                postcode=postcode,
+                date=date or "ASAP"
+            )
+            
+            return {
+                "success": call_result.get("success", False),
+                "availability": "checking" if call_result.get("success") else "unavailable",
+                "message": f"Called {supplier_name} to check availability",
+                "booking_ref": pricing_result.get("booking_ref"),
+                "price": pricing_result.get("price"),
+                "supplier_phone": supplier_phone,
+                "supplier_name": supplier_name,
+                "conversation_id": call_result.get("conversation_id"),
+                "call_sid": call_result.get("call_sid")
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Availability check failed: {str(e)}",
+                "booking_ref": pricing_result.get("booking_ref"),
+                "price": pricing_result.get("price"),
+                "supplier_phone": supplier_phone
+            }
