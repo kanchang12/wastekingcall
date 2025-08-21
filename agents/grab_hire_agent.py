@@ -1,4 +1,4 @@
-import json
+import json 
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
@@ -19,13 +19,13 @@ EXACT TERMINOLOGY - Use word for word:
 - 8-wheeler = 16-tonne capacity: "I understand you need an 8-wheeler grab lorry. That's a 16-tonne capacity lorry."
 
 BUSINESS RULES:
-- Office hours transfers: £300+ to specialist
+- Office hours transfers: Â£300+ to specialist
 - Out of hours: NEVER transfer, take callback
 - Always confirm grab terminology exactly as above
 - Check postcode for access
 - Suitable for heavy materials (soil, concrete, muck)
 
-Transfer at £300+ during office hours only.
+Transfer at Â£300+ during office hours only.
 """),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
