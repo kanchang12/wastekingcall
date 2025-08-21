@@ -33,56 +33,56 @@ class SMPAPITool(BaseTool):
             print(f"❌ SMP API Error: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _get_pricing(self, postcode: str = "", service: str = "", type_: str = "", **kwargs) -> Dict[str, Any]:
-        """Get pricing from your working Flask API"""
-        print(f"💰 Getting pricing for {service} {type_} in {postcode}")
+def _get_pricing(self, postcode: str = "", service: str = "", type_: str = "", **kwargs) -> Dict[str, Any]:
+    """Get pricing from your working Flask API"""
+    print(f"💰 Getting pricing for {service} {type_} in {postcode}")
+    
+    if not postcode or not service:
+        print("❌ Missing required parameters")
+        return {"success": False, "error": "Missing postcode or service"}
+    
+    try:
+        # Call your actual working Flask API endpoint
+        api_url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/wasteking-get-price"
         
-        if not postcode or not service:
-            print("❌ Missing required parameters")
-            return {"success": False, "error": "Missing postcode or service"}
+        payload = {
+            "postcode": postcode,
+            "service": service,
+            "type": type_ or "8yard"
+        }
         
-        try:
-            # Call your actual working Flask API endpoint
-            api_url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/wasteking-get-price"
+        response = requests.post(
+            api_url,
+            json=payload,
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
             
-            payload = {
-                "postcode": postcode,
-                "service": service,
-                "type": type_ or "8yard"
-            }
-            
-            response = requests.post(
-                api_url,
-                json=payload,
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                if data.get("success"):
-                    print(f"✅ Real pricing from Flask API: {data.get('price')}")
-                    return {
-                        "success": True,
-                        "booking_ref": data.get("booking_ref"),
-                        "price": data.get("price"),
-                        "supplier_phone": data.get("real_supplier_phone", "07823656762"),
-                        "supplier_name": data.get("supplier_name", "Local Supplier"),
-                        "postcode": postcode,
-                        "service_type": service,
-                        "skip_size": type_
-                    }
-                else:
-                    print("❌ Flask API returned failure, using fallback")
-                    return self._get_fallback_pricing(service, type_)
+            if data.get("success"):
+                print(f"✅ Real pricing from Flask API: {data.get('price')}")
+                return {
+                    "success": True,
+                    "booking_ref": data.get("booking_ref"),
+                    "price": data.get("price"),
+                    "supplier_phone": data.get("real_supplier_phone", "07823656762"),
+                    "supplier_name": data.get("supplier_name", "Local Supplier"),
+                    "postcode": postcode,
+                    "service_type": service,
+                    "skip_size": type_
+                }
             else:
-                print(f"❌ Flask API error: {response.status_code}")
-                return {"success": False, "error": f"API error: {response.status_code}"}
-                
-        except Exception as e:
-            print(f"❌ Flask API call failed: {str(e)}")
-            return {"success": False, "error": f"API call failed: {str(e)}"}"❌ Flask API call failed: {str(e)}")
-            return self._get_fallback_pricing(service, type_)
+                print("❌ Flask API returned failure, using fallback")
+                return self._get_fallback_pricing(service, type_)
+        else:
+            print(f"❌ Flask API error: {response.status_code}")
+            return {"success": False, "error": f"API error: {response.status_code}"}
+            
+    except Exception as e:
+        print(f"❌ Flask API call failed: {str(e)}")
+        return {"success": False, "error": f"API call failed: {str(e)}"}
+
     
     def _confirm_and_pay(self, booking_ref: str = "", customer_phone: str = "", **kwargs) -> Dict[str, Any]:
         """Confirm booking and send SMS via your Flask API"""
