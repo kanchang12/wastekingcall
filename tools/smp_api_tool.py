@@ -7,7 +7,7 @@ from pydantic import Field
 
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
-    description: str = "Get real pricing, create bookings and call sub-contractors with WasteKing SMP API"
+    description: str = "Get WasteKing pricing and call suppliers. Use when customer asks for prices, costs, or availability. Parameters: postcode (required), service (skip/man_and_van/grab), type_ (4yard/6yard/8yard/12yard)"
     base_url: str = Field(default="https://wk-smp-api-dev.azurewebsites.net/")
     access_token: str = Field(default="")
     
@@ -56,6 +56,29 @@ class SMPAPITool(BaseTool):
         
         print(f"❌ Booking creation failed: HTTP {response.status_code}")
         return {"success": False, "error": f"HTTP {response.status_code}"}
+
+    # Add this to your existing SMPAPITool class
+def _run(self, action: str = "get_pricing", postcode: str = "", service: str = "", type_: str = "", **kwargs) -> Dict[str, Any]:
+    try:
+        print(f"🔧 SMP API Tool called with action: {action}")
+        print(f"🔧 Parameters: postcode={postcode}, service={service}, type_={type_}")
+        
+        if action == "get_pricing" and postcode and service and type_:
+            return self._get_pricing(postcode, service, type_)
+        elif action == "create_booking":
+            return self._create_booking()
+        elif action == "call_supplier":
+            return self._call_supplier(**kwargs)
+        elif action == "check_supplier_availability":
+            return self._check_supplier_availability(postcode, service, type_)
+        else:
+            # Default to get_pricing if parameters provided
+            if postcode and service:
+                return self._get_pricing(postcode, service, type_ or "8yard")
+            return {"success": False, "error": f"Unknown action: {action}"}
+    except Exception as e:
+        print(f"❌ SMP API Error: {str(e)}")
+        return {"success": False, "error": str(e)}
     
     def _get_pricing(self, postcode: str, service: str, type_: str, booking_ref: str = None) -> Dict[str, Any]:
         print(f"💰 Getting pricing for {service} {type_} in {postcode}")
