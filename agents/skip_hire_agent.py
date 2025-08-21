@@ -147,8 +147,7 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
                 data['type'] = f"{size_num}yd"
                 break
                 
-        if "type" in inputs and "size" not in inputs:
-            inputs["size"] = inputs.pop("type")
+
 
         if 'type' not in data:
             data['type'] = '8yd'  # Default
