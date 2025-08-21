@@ -50,13 +50,21 @@ Always collect: name, postcode, waste type before pricing. for pricing always ca
     
     def process_message(self, message: str, context: Dict = None) -> str:
         try:
-            response = self.executor.invoke({
-                "input": message,
-                "context": json.dumps(context) if context else "{}"
-            })
+            # Pass context keys as part of the agent input so tools get them
+            agent_input = {
+                "input": message
+            }
+    
+            if context:
+                # flatten context dict into input for tools
+                for k, v in context.items():
+                    agent_input[k] = v  
+    
+            response = self.executor.invoke(agent_input)
             return response["output"]
         except Exception as e:
             return "I understand. Let me help you with your skip hire needs. What's your postcode?"
+
     
     def check_heavy_materials(self, waste_type: str, skip_size: str) -> bool:
         heavy_materials = ["soil", "rubble", "concrete", "bricks", "stone", "hardcore"]
