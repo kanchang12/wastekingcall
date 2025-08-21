@@ -6,7 +6,7 @@ flask
 requests
 python-dotenv
 twilio
-
+PyPDF2
 Flask
 gunicorn
 
