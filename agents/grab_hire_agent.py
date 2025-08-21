@@ -3,29 +3,24 @@ import re
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
-
 from langchain.prompts import ChatPromptTemplate
 from utils.rules_processor import RulesProcessor
-
 
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
         self.rules_processor = RulesProcessor()
-
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""You are the WasteKing Grab Hire specialist - friendly, British, and RULE-FOLLOWING!
+            ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and RULE-FOLLOWING!
 
 PERSONALITY - CRITICAL:
 - Start with: "Alright love!" or "Hello there!" or "Right then!" 
 - Use British phrases: "Brilliant!", "Lovely!", "Smashing!", "Perfect!"
 - Be chatty: "How's your day going?", "Lovely to hear from you!"
 - Sound human and warm, not robotic
-Follow all relevant rules from the team:\n{rule_text}
+
 BUSINESS RULES - FOLLOW EXACTLY:
 1. ALWAYS collect NAME, POSTCODE, MATERIAL TYPE before pricing
 2. Grab lorries ideal for: soil, muck, rubble, hardcore, sand, gravel
@@ -54,7 +49,7 @@ RESPONSES:
 - Check road access: "Can our grab lorry access your property from the road?"
 - Explain tonnage limits clearly
 - Give same day availability
-Follow all relevant rules from the team:\n{rule_text}
+
 NEVER skip qualification questions. NEVER call smp_api without name, postcode, material type.
 """),
             ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
