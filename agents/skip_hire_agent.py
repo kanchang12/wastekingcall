@@ -9,7 +9,8 @@ class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        
+        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
+
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the WasteKing Skip Hire specialist - friendly, British, and RULE-FOLLOWING!
 
@@ -31,7 +32,7 @@ EXACT SCRIPTS - Use word for word:
 - Sofa prohibition: "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service."
 - Road placement: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
 - MAV suggestion for light materials + 8yard or smaller: "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
-
+Follow all relevant rules from the team:\n{rule_text}
 QUALIFICATION PROCESS:
 1. If missing NAME: "Hello! I'm here to help with your skip hire. What's your name?"
 2. If missing POSTCODE: "Lovely! And what's your postcode for delivery?"  
