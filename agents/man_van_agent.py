@@ -1,80 +1,163 @@
-import json 
-from typing import Dict, Any, List
-from langchain.agents import AgentExecutor, create_openai_functions_agent
-from langchain.tools import BaseTool
-from langchain.prompts import ChatPromptTemplate
+import json
+from typing import Dict, Any, List, Optional
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferWindowMemory
 
-class ManVanAgent:
-    def __init__(self, llm, tools: List[BaseTool]):
+class AgentOrchestrator:
+    def __init__(self, llm, agents: Dict):
         self.llm = llm
-        self.tools = tools
-        self.memory = ConversationBufferWindowMemory(k=10, return_messages=True)
+        self.agents = agents
+        self.memory = ConversationBufferWindowMemory(k=20, return_messages=True)
+        self.conversation_state = {}
         
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Man & Van specialist agent.
+        self.routing_prompt = PromptTemplate(
+            input_variables=["message", "conversation_history", "active_services"],
+            template="""Route this customer message to the appropriate WasteKing agent(s).
 
-BUSINESS RULES:
-- Heavy materials = MUST transfer to specialist (soil, concrete, bricks, rubble)
-- Stairs/flats = MUST transfer to specialist
-- Office hours transfers only: £500+ to specialist
-- Out of hours: NEVER transfer, take callback
-- Rate: £30 per cubic yard
-- Minimum charge: £90
+Customer Message: {message}
+Conversation History: {conversation_history}
+Currently Active Services: {active_services}
 
-TRANSFER CONDITIONS:
-- Heavy materials: "For heavy materials, I'll need to put you through to our specialist who can assess the requirements properly."
-- Stairs: "For properties with stairs, I'll connect you with our specialist who handles complex access situations."
-- High value (£500+ during office hours): Transfer to specialist
-- Out of hours: "I'll take your details and have someone call you back during office hours."
+Available Agents:
+- skip_hire: Handle skip hire, container rental, waste bins
+- man_and_van: Handle collection services, clearance
+- grab_hire: Handle grab lorries, muck away services  
+- pricing: Handle pricing calculations, surcharges, VAT
 
-Always check: items list, access (stairs/ground floor), approximate volume.
-"""),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}")
-        ])
-        
-        self.agent = create_openai_functions_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=self.prompt
+Routing Rules:
+- If customer mentions specific service, route to that agent
+- If pricing mentioned, include pricing agent
+- If multiple services mentioned, route to multiple agents
+- If unclear, route to skip_hire as default
+
+Return JSON: {{"primary_agent": "agent_name", "secondary_agents": ["agent1", "agent2"], "reasoning": "explanation"}}
+"""
         )
         
-        self.executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
-            memory=self.memory,
-            verbose=True,
-            max_iterations=3
-        )
+        self.routing_chain = LLMChain(llm=self.llm, prompt=self.routing_prompt)
     
-    def process_message(self, message: str, context: Dict = None) -> str:
+    def process_customer_message(self, message: str, conversation_id: str) -> Dict[str, Any]:
+        print(f"🎯 Orchestrator processing: {message}")
+        
+        # Get conversation state
+        if conversation_id not in self.conversation_state:
+            self.conversation_state[conversation_id] = {
+                "active_services": [],
+                "customer_data": {},
+                "conversation_history": []
+            }
+        
+        state = self.conversation_state[conversation_id]
+        state["conversation_history"].append({"type": "customer", "message": message})
+        
+        # Route to appropriate agent(s)
+        routing_decision = self._route_message(message, state)
+        print(f"🎯 Routing to: {routing_decision}")
+        
+        # Process with primary agent
+        primary_response = self._process_with_agent(
+            routing_decision["primary_agent"], 
+            message, 
+            state
+        )
+        
+        print(f"🎯 Primary agent response: {primary_response}")
+        
+        # Process with secondary agents if needed
+        secondary_responses = {}
+        for agent_name in routing_decision.get("secondary_agents", []):
+            secondary_responses[agent_name] = self._process_with_agent(
+                agent_name, 
+                message, 
+                state
+            )
+        
+        # Coordinate responses
+        final_response = self._coordinate_responses(
+            primary_response,
+            secondary_responses,
+            state
+        )
+        
+        print(f"🎯 Final orchestrator response: {final_response}")
+        
+        state["conversation_history"].append({"type": "agent", "message": final_response})
+        
+        return {
+            "response": final_response,
+            "conversation_id": conversation_id,
+            "routing": routing_decision,
+            "state": state
+        }
+    
+    def _route_message(self, message: str, state: Dict) -> Dict:
         try:
-            response = self.executor.invoke({
-                "input": message,
-                "context": json.dumps(context) if context else "{}"
+            routing_result = self.routing_chain.invoke({
+                "message": message,
+                "conversation_history": json.dumps(state["conversation_history"][-5:]),
+                "active_services": json.dumps(state["active_services"])
             })
-            return response["output"]
+            return json.loads(routing_result["text"])
         except Exception as e:
-            return "I understand. Let me help you with our man & van service. What items do you need collected?"
+            print(f"❌ Routing error: {e}")
+            # Simple keyword-based routing as fallback
+            message_lower = message.lower()
+            if any(word in message_lower for word in ["man", "van", "collection", "clearance"]):
+                return {"primary_agent": "man_and_van", "secondary_agents": [], "reasoning": "keyword_fallback"}
+            elif any(word in message_lower for word in ["grab", "lorry", "wheeler", "muck"]):
+                return {"primary_agent": "grab_hire", "secondary_agents": [], "reasoning": "keyword_fallback"}
+            elif any(word in message_lower for word in ["price", "cost", "quote", "pricing"]):
+                return {"primary_agent": "pricing", "secondary_agents": [], "reasoning": "keyword_fallback"}
+            else:
+                return {"primary_agent": "skip_hire", "secondary_agents": [], "reasoning": "default_fallback"}
     
-    def check_transfer_required(self, items: str, access: str, office_hours: bool, amount: float = 0) -> Dict:
-        heavy_keywords = ["soil", "concrete", "bricks", "rubble", "stone", "tiles"]
-        stairs_keywords = ["stairs", "flat", "floor", "upstairs", "apartment"]
+    def _process_with_agent(self, agent_name: str, message: str, state: Dict) -> str:
+        print(f"🤖 Processing with {agent_name} agent")
         
-        has_heavy = any(keyword in items.lower() for keyword in heavy_keywords)
-        has_stairs = any(keyword in access.lower() for keyword in stairs_keywords)
+        if agent_name in self.agents:
+            try:
+                response = self.agents[agent_name].process_message(message, state)
+                print(f"🤖 {agent_name} agent returned: {response}")
+                return response
+            except Exception as e:
+                print(f"❌ Agent {agent_name} error: {e}")
+                return f"I can help you with {agent_name.replace('_', ' ')}. Could you provide more details?"
+        else:
+            print(f"❌ Agent {agent_name} not found")
+            return "I understand. How can I help you today?"
+    
+    def _coordinate_responses(self, primary: str, secondary: Dict, state: Dict) -> str:
+        # If no secondary responses, return primary
+        if not secondary:
+            return primary
         
-        if has_heavy:
-            return {"transfer": True, "reason": "heavy_materials"}
+        # If we have secondary responses, intelligently combine them
+        all_responses = [primary]
+        for agent_name, response in secondary.items():
+            if response and response != primary:
+                all_responses.append(response)
         
-        if has_stairs:
-            return {"transfer": True, "reason": "stairs_access"}
+        # Return the most comprehensive response or combine if needed
+        if len(all_responses) == 1:
+            return all_responses[0]
+        else:
+            # Combine responses intelligently
+            return " ".join(all_responses)
+    
+    def detect_services_in_message(self, message: str) -> List[str]:
+        message_lower = message.lower()
+        services = []
         
-        if office_hours and amount >= 500:
-            return {"transfer": True, "reason": "high_value"}
+        skip_keywords = ["skip", "container", "bin", "yard", "disposal"]
+        mav_keywords = ["man and van", "collection", "clearance", "man & van"]
+        grab_keywords = ["grab", "lorry", "muck away", "wheeler"]
         
-        if not office_hours and amount > 0:
-            return {"transfer": False, "reason": "out_of_hours_callback"}
-        
-        return {"transfer": False, "reason": "none"}
+        if any(keyword in message_lower for keyword in skip_keywords):
+            services.append("skip_hire")
+        if any(keyword in message_lower for keyword in mav_keywords):
+            services.append("man_and_van")
+        if any(keyword in message_lower for keyword in grab_keywords):
+            services.append("grab_hire")
+            
+        return services
