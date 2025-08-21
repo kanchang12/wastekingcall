@@ -6,47 +6,9 @@ flask
 requests
 python-dotenv
 twilio
-# Core Framework
+
 Flask
 gunicorn
 
-# LangChain and AI
-langchain
-openai
-tiktoken
-
-# PDF Processing
-PyPDF2
-
-# Database
-sqlite3
-
-# HTTP Requests
-requests
-
-# SMS/Communication
-twilio
-
-# Data Processing
-pandas
-numpy
-
-# Environment Management
-python-dotenv
-
-# Date/Time Processing
-python-dateutil
-
-# JSON/Data Handling
-pydantic
-
-# Logging
-structlog
-
-# CORS Support
 flask-cors
 
-# Development Tools (optional)
-pytest
-black
-flake8
