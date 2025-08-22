@@ -60,11 +60,10 @@ class SMPAPITool(BaseTool):
     def _send_koyeb_webhook(self, url, data_payload):
         """Send actual data to Koyeb endpoint"""
         try:
-            headers = {"Content-Type": "application/json"}
-            
+            self._log_with_timestamp(f"🔄 Sending to Koyeb URL: {url}")
             self._log_with_timestamp(f"🔄 Sending to Koyeb: {json.dumps(data_payload, indent=2)}")
             
-            response = requests.post(url, headers=headers, json=data_payload, timeout=30)
+            response = requests.post(url, json=data_payload, timeout=30)
             
             self._log_with_timestamp(f"🔄 Koyeb response status: {response.status_code}")
             self._log_with_timestamp(f"🔄 Koyeb response text: {response.text}")
@@ -72,7 +71,7 @@ class SMPAPITool(BaseTool):
             if response.status_code in [200, 201]:
                 return response.json()
             else:
-                return {"success": False, "error": f"Koyeb failed with status {response.status_code}"}
+                return {"success": False, "error": f"Koyeb failed with status {response.status_code}: {response.text}"}
                 
         except Exception as e:
             self._log_error("Koyeb request failed", e)
