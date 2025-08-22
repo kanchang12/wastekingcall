@@ -56,7 +56,7 @@ def initialize_system():
     ]
     
     print(f"Initialized {len(tools)} tools")
-    """
+    
     # Initialize agents - FIXED: using 'mav' not 'man_and_van'
     agents = {
         'skip_hire': SkipHireAgent(llm, tools),
@@ -64,15 +64,9 @@ def initialize_system():
         'grab_hire': GrabHireAgent(llm, tools),
         'pricing': PricingAgent(llm, tools)
     }
-    """
+    
 
-    from agents.streamlined_agent import SkipHireAgent, ManVanAgent, GrabHireAgent
 
-    agents = {
-        'skip_hire': SkipHireAgent(llm, tools),
-        'mav': ManVanAgent(llm, tools),
-        'grab_hire': GrabHireAgent(llm, tools),
-    }
     
     print(f"Initialized {len(agents)} agents")
     
