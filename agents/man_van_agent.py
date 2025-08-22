@@ -14,28 +14,21 @@ class ManVanAgent:
         self.llm = llm
         self.tools = tools
         
-        # RESTORED: PDF rule book integration
-        self.rules_processor = RulesProcessor()
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
-        
+        # Simple prompt - no complex PDF rules
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Man & Van agent with PDF RULES.
+            ("system", """You are a Man & Van agent.
 
 HEAVY ITEMS RULE:
 Man & Van CANNOT handle: bricks, concrete, soil, rubble, sand, stone
 
 If heavy items detected: "Sorry mate, heavy materials need Skip Hire service."
 
-RULES FROM PDF KNOWLEDGE BASE:
-""" + rule_text + """
-
 WORKFLOW:
 1. Check for heavy items FIRST - if found, REFUSE
 2. Get pricing or create booking as requested
 3. Ask for missing info if needed
 
-Follow PDF rules above. Be helpful and direct."""),
+Be helpful and direct."""),
             ("human", "Customer: {input}\n\nPostcode: {postcode}\nItems: {items}"),
             ("placeholder", "{agent_scratchpad}")
         ])
@@ -52,7 +45,7 @@ Follow PDF rules above. Be helpful and direct."""),
         print(f"🔧 MAV DATA: {json.dumps(extracted_data, indent=2)}")
         
         # Check for heavy items 
-        heavy_items = extracted_data.get('heavy_items', [])
+        heavy_items = None
         if heavy_items:
             print(f"🔧 HEAVY ITEMS DETECTED: {heavy_items}")
             return f"Sorry mate, {', '.join(heavy_items)} are too heavy for Man & Van. You need Skip Hire for that."
