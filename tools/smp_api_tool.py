@@ -97,8 +97,10 @@ class SMPAPITool(BaseTool):
                 "Content-Type": "application/json"
             }
             
-            payload = {"bookingRef": booking_ref}
-            payload.update(update_data)
+            payload1 = {
+                "bookingRef": booking_ref,
+                "payload": update_data
+            }
             
             self._log_with_timestamp(f"🔄 Updating booking {booking_ref} with payload: {json.dumps(payload, indent=2)}")
             
@@ -108,7 +110,7 @@ class SMPAPITool(BaseTool):
             response = requests.post(
                 update_url,
                 headers=headers,
-                json=payload,
+                json=payload1,
                 timeout=20,
                 verify=False
             )
