@@ -386,8 +386,9 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         }
         
         return default_state
-    
-     def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
+        
+        
+    def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
         """Extract key information from message and update state"""
     
         message_lower = message.lower()
