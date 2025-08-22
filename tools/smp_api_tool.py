@@ -1,5 +1,5 @@
-# tools/smp_api_tool.py - REPLACEMENT FILE for tools folder
-# CHANGES: Fixed booking confirmation, automatic supplier calling, hardcoded supplier phone as requested
+# tools/smp_api_tool.py - FIXED PYDANTIC VERSION
+# CHANGES: Fixed Pydantic error, hardcoded supplier phone as requested
 
 import requests
 import json
@@ -28,13 +28,17 @@ class SMPAPITool(BaseTool):
     access_token: str = Field(default="")  
     koyeb_url: str = Field(default="https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app")
     
-    # CHANGE: Hardcoded supplier phone as business requirement
-    BUSINESS_SUPPLIER_PHONE = "+447394642517"
+    # CHANGE: Fixed Pydantic error by using property method instead of class attribute
+    @property
+    def business_supplier_phone(self) -> str:
+        """Hardcoded business supplier phone as requested"""
+        return "+447394642517"
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         try:
             print(f"🔧 SMP API Tool called with action: {action}")
             print(f"🔧 Parameters: {kwargs}")
+            print(f"📞 Using hardcoded supplier phone: {self.business_supplier_phone}")
             
             if action == "get_pricing":
                 return self._get_pricing(**kwargs)
@@ -129,17 +133,18 @@ class SMPAPITool(BaseTool):
             booking_ref = response.get('booking_ref')
             price = response.get('price', '')
             
-            # CHANGE: Use hardcoded supplier phone as business requirement
-            supplier_phone = self.BUSINESS_SUPPLIER_PHONE
+            # CHANGE: Use hardcoded supplier phone property
+            supplier_phone = self.business_supplier_phone
             supplier_name = "WasteKing Local Supplier"
             
             print(f"✅ Got price: {price} for booking: {booking_ref}")
+            print(f"📞 Using supplier phone: {supplier_phone}")
             
             return {
                 "success": True,
                 "booking_ref": booking_ref,
                 "price": price,
-                "supplier_phone": supplier_phone,  # CHANGE: Always use business phone
+                "supplier_phone": supplier_phone,
                 "supplier_name": supplier_name,
                 "postcode": postcode,
                 "service": service,
@@ -156,7 +161,7 @@ class SMPAPITool(BaseTool):
     
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """CHANGE: Enhanced booking creation with automatic supplier calling"""
+        """Enhanced booking creation with automatic supplier calling"""
         
         # Validate required parameters
         required_fields = ['type', 'service', 'postcode', 'firstName', 'phone', 'booking_ref']
@@ -213,7 +218,7 @@ class SMPAPITool(BaseTool):
             print(f"📞 Auto-calling supplier for booking {booking_ref}")
             
             supplier_call_result = self._call_supplier(
-                supplier_phone=self.BUSINESS_SUPPLIER_PHONE,  # Use business phone
+                supplier_phone=self.business_supplier_phone,  # Use hardcoded phone
                 supplier_name="WasteKing Local Supplier",
                 booking_ref=booking_ref,
                 message=f"New booking {booking_ref} for {kwargs.get('firstName', 'Customer')} - {service} {type} at {postcode}. Customer: {kwargs.get('phone', '')}",
@@ -279,11 +284,11 @@ class SMPAPITool(BaseTool):
 
     def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
                       booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """CHANGE: Enhanced supplier calling with business phone"""
+        """Enhanced supplier calling with hardcoded business phone"""
         
-        # CHANGE: Always use business phone if not provided
+        # CHANGE: Always use hardcoded business phone if not provided
         if not supplier_phone:
-            supplier_phone = self.BUSINESS_SUPPLIER_PHONE
+            supplier_phone = self.business_supplier_phone
             
         if not supplier_name:
             supplier_name = "WasteKing Local Supplier"
@@ -367,8 +372,8 @@ class SMPAPITool(BaseTool):
         if not pricing_result.get("success"):
             return pricing_result
         
-        # CHANGE: Always use business supplier phone
-        supplier_phone = self.BUSINESS_SUPPLIER_PHONE
+        # CHANGE: Always use hardcoded business supplier phone
+        supplier_phone = self.business_supplier_phone
         supplier_name = "WasteKing Local Supplier"
         
         print(f"📞 Checking availability with {supplier_name}")
