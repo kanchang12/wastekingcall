@@ -15,7 +15,7 @@ class SMPAPITool(BaseTool):
     
     Required parameters for each action:
     - get_pricing: postcode, service, type (e.g., postcode="[POSTCODE]", service="skip-hire", type="8yd")
-    - create_booking_quote: postcode, service, type, firstName, phone
+    - create_booking_quote: postcode, service, type, firstName, phone, booking_ref
     - take_payment: call_sid, customer_phone, quote_id, amount
     - call_supplier: supplier_phone, supplier_name, booking_ref, message
     """
@@ -57,7 +57,7 @@ class SMPAPITool(BaseTool):
             self._log_with_timestamp(f"ERROR: {message}", "ERROR")
 
     def _create_wasteking_booking(self):
-        """Create booking reference - EXACT copy from your Flask code"""
+        """Create booking reference - STEP 1"""
         try:
             headers = {
                 "x-wasteking-request": self.access_token,
@@ -90,7 +90,7 @@ class SMPAPITool(BaseTool):
             return None
 
     def _update_wasteking_booking(self, booking_ref, update_data):
-        """Update booking - EXACT copy from your Flask code"""
+        """Update booking"""
         try:
             headers = {
                 "x-wasteking-request": self.access_token,
@@ -129,7 +129,7 @@ class SMPAPITool(BaseTool):
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing - Steps 1 and 2 only"""
+        """Get pricing - STEP 1 & 2: Create booking and get price"""
         
         # Validate required parameters
         if not postcode:
@@ -166,7 +166,7 @@ class SMPAPITool(BaseTool):
             supplier_phone = quote_data.get('supplierPhone', "+447823656907")
             supplier_name = quote_data.get('supplierName', "Default Supplier")
             
-            # Return format
+            # Return format - same as Flask code
             return {
                 "success": True,
                 "booking_ref": booking_ref,
@@ -188,7 +188,7 @@ class SMPAPITool(BaseTool):
     
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Create booking quote - STEP 3: Add firstName and phone to get booking link"""
+        """Create booking quote - STEP 3: Add customer details"""
         
         # Validate required parameters
         if not type:
@@ -201,23 +201,22 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: firstName"}
         if not kwargs.get('phone'):
             return {"success": False, "error": "Missing required parameter: phone"}
+        if not kwargs.get('booking_ref'):
+            return {"success": False, "error": "Missing required parameter: booking_ref"}
             
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
         try:
-            # MUST have booking ref from previous step
             booking_ref = kwargs.get('booking_ref')
-            if not booking_ref:
-                return {"success": False, "message": "Missing booking_ref from previous pricing step"}
 
-            # STEP 3: Update with firstName and phone to get booking link
+            # STEP 3: Add customer details with payload format - match curl exactly
             payment_payload = {
                 "payload": {
                     "postCode": postcode,
                     "service": service,
                     "type": type,
-                    "firstName": kwargs.get('firstName'),
-                    "phone": kwargs.get('phone')
+                    "firstname": kwargs.get('firstName'),  # lowercase as per curl
+                    "Phone": kwargs.get('phone')  # uppercase P as per curl
                 }
             }
             
@@ -246,7 +245,7 @@ class SMPAPITool(BaseTool):
     
     def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Send payment link to customer"""
+        """Send payment link to customer - EXACTLY like Flask confirm_wasteking_booking"""
         
         # Validate required parameters
         if not customer_phone:
@@ -257,7 +256,7 @@ class SMPAPITool(BaseTool):
         print(f"💳 Taking payment for quote {quote_id}")
         
         try:
-            # Generate payment link from WasteKing
+            # Generate payment link using action: quote - EXACTLY like Flask code
             payment_payload = {"action": "quote"}
             payment_response = self._update_wasteking_booking(quote_id, payment_payload)
             
@@ -265,7 +264,9 @@ class SMPAPITool(BaseTool):
                 payment_link = payment_response['quote']['paymentLink']
                 final_price = payment_response['quote'].get('price', amount or '50')
             else:
-                return {"success": False, "error": "No payment link available"}
+                # Fallback like Flask code
+                payment_link = "https://www.paypal.com/ncp/payment/BQ82GUU9VSKYN"
+                final_price = amount or '50'
 
             # Send SMS using your existing function
             sms_response = self._send_payment_sms(quote_id, customer_phone, payment_link, str(final_price))
@@ -284,11 +285,11 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": f"Payment processing failed: {str(e)}"}
 
     def _send_payment_sms(self, booking_ref: str, phone: str, payment_link: str, amount: str):
-        """Send payment SMS via Twilio - EXACT copy from your Flask code"""
+        """Send payment SMS via Twilio - EXACTLY like Flask code"""
         try:
             from twilio.rest import Client
             
-            # Clean and format phone number
+            # Clean and format phone number - EXACTLY like Flask code
             if phone.startswith('0'):
                 phone = f"+44{phone[1:]}"
             elif phone.startswith('44'):
@@ -301,7 +302,7 @@ class SMPAPITool(BaseTool):
                 self._log_with_timestamp(f"❌ Invalid UK phone number format: {phone}")
                 return {"success": False, "message": "Invalid UK phone number format"}
             
-            # Create SMS message with the final adjusted amount
+            # Create SMS message - EXACTLY like Flask code
             TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
             TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
             TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
