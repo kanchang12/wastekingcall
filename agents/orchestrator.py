@@ -389,26 +389,27 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
     
     def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
         """Extract key information from message and update state"""
-        
+    
         message_lower = message.lower()
         extracted = state.get('extracted_info', {})
-        
+    
         # Extract postcode - CLEAN FORMAT FOR API
         postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',
-            r'\b(LS\d{4})\b',
-            r'\b([A-Z]{1,2}\d{1,4})\b'
+            r'\b([A-Z]{1,2}[0-9R][0-9A-Z]? ?[0-9][A-Z]{2})\b', # More robust UK postcode pattern
+            r'\b([A-Z]{1,2}\d{1,4})\b',                        # Catches outward code like LS1
         ]
-        
+    
         for pattern in postcode_patterns:
-            postcode_match = re.search(postcode_patterns, message.upper())
+            # FIX: Pass the single pattern from the loop, not the list
+            postcode_match = re.search(pattern, message.upper())
             if postcode_match:
                 raw_postcode = postcode_match.group(1)
+                # FIX: Ensure it removes space if present
                 clean_postcode = raw_postcode.replace(' ', '').upper()
-                extracted = {'postcode': clean_postcode}
+                extracted['postcode'] = clean_postcode
                 print(f"✅ FOUND POSTCODE: '{raw_postcode}' → CLEANED: '{clean_postcode}' (for API)")
                 break
-        
+    
         # Extract phone number
         phone_patterns = [
             r'\b0\d{10}\b',
@@ -422,7 +423,7 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
                 extracted['phone'] = phone_match.group(0).replace(' ', '')
                 print(f"✅ FOUND PHONE: {extracted['phone']}")
                 break
-        
+    
         # Extract name
         name_patterns = [
             r'\bname\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
@@ -431,13 +432,15 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
             r'\b([A-Z][a-z]+)\b'
         ]
         
-        for pattern in name_patterns:
-            name_match = re.search(pattern, message)
-            if name_match:
-                extracted['name'] = name_match.group(1)
-                print(f"✅ FOUND NAME: {extracted['name']}")
-                break
-        
+        # Do not overwrite name if already found
+        if 'name' not in extracted:
+            for pattern in name_patterns:
+                name_match = re.search(pattern, message)
+                if name_match:
+                    extracted['name'] = name_match.group(1)
+                    print(f"✅ FOUND NAME: {extracted['name']}")
+                    break
+    
         # Extract waste types
         waste_keywords = [
             'brick', 'bricks', 'rubble', 'concrete', 'soil', 'muck', 'sand', 'gravel',
@@ -461,7 +464,7 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
             all_waste = list(set(existing_waste + found_waste))
             extracted['waste_type'] = ', '.join(all_waste)
             print(f"✅ FOUND WASTE: {extracted['waste_type']}")
-        
+    
         # Extract skip size
         size_patterns = [
             r'(\d+)\s*ya?rd',
@@ -476,13 +479,13 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
                 extracted['type'] = f"{size_match.group(1)}yd"
                 print(f"✅ FOUND SIZE: {extracted['size']}")
                 break
-        
+    
         # Check for booking intent
         booking_keywords = ['book', 'booking', 'schedule', 'arrange', 'order', 'confirm']
         if any(keyword in message_lower for keyword in booking_keywords):
             extracted['wants_booking'] = True
             print(f"✅ BOOKING INTENT DETECTED")
-        
+    
         # Update state
         state['extracted_info'] = extracted
         
