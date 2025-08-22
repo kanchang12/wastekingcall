@@ -1,21 +1,25 @@
 import json 
 import re
+import os
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-from utils.rules_processor import RulesProcessor
+import PyPDF2
 
 class ManVanAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        self.rules_processor = RulesProcessor()
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+        
+        # Direct PDF import from data/rules/all rules.pdf
+        pdf_rules = self._load_pdf_rules()
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Man & Van agent with STRICT RULES.
+            ("system", f"""You are a Man & Van agent with STRICT RULES.
+
+RULES FROM PDF KNOWLEDGE BASE:
+{pdf_rules}
 
 HEAVY ITEMS RULE:
 Man & Van CANNOT handle: bricks, mortar, concrete, soil, tiles, construction waste, industrial waste
@@ -31,9 +35,6 @@ Light items + postcode → Call smp_api(action="get_pricing", postcode=X, servic
 Missing data → Ask once
 
 Be direct. YOU decide based on rules. NEVER GIVE FAKE PRICES!
-
-Follow team rules:
-""" + rule_text + """
 
 CRITICAL: Call smp_api with service="mav" when you have postcode + suitable items."""),
             ("human", """Customer: {input}
@@ -51,6 +52,26 @@ Don't ask for data you already have!"""),
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=2)
     
+    def _load_pdf_rules(self) -> str:
+        """Load rules directly from data/rules/all rules.pdf"""
+        try:
+            pdf_path = "data/rules/all rules.pdf"
+            print(f"🔧 MAN & VAN AGENT: Loading PDF rules from: {pdf_path}")
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text()
+                print(f"🔧 MAN & VAN AGENT: PDF rules loaded successfully ({len(text)} characters)")
+                return text
+            else:
+                print(f"❌ MAN & VAN AGENT: PDF rules not found at {pdf_path}")
+                return "PDF rules not found - using basic man & van rules"
+        except Exception as e:
+            print(f"❌ MAN & VAN AGENT: Error loading PDF rules: {e}")
+            return "PDF rules not available - using basic man & van rules"
+    
     def process_message(self, message: str, context: Dict = None) -> str:
         # Get data from context first, then message
         extracted = context.get('extracted_info', {}) if context else {}
@@ -63,6 +84,7 @@ Don't ask for data you already have!"""),
         print(f"🔧 MAN & VAN AGENT:")
         print(f"   📍 Postcode: {postcode}")
         print(f"   📦 Items: {items}")
+        print(f"🔧 MAN & VAN AGENT: Tools available: {[tool.name for tool in self.tools]}")
         
         # Let AI agent decide about heavy items based on rules, no hardcoded checks
         agent_input = {
@@ -73,7 +95,9 @@ Don't ask for data you already have!"""),
             "phone": phone
         }
         
+        print(f"🔧 MAN & VAN AGENT: Executing agent")
         response = self.executor.invoke(agent_input)
+        print(f"🔧 MAN & VAN AGENT: Agent execution completed successfully")
         return response["output"]
     
     def _get_postcode(self, message: str) -> str:
