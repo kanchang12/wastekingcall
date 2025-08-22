@@ -4,54 +4,6 @@ import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-# agents/orchestrator.py - COMPLETE FIXED VERSION WITH GLOBAL STATE
-# MINIMAL CHANGES - ONLY ADDED:
-# 1. Better booking confirmation detection
-# 2. Hardcoded supplier call to +447394642517 when customer says yes
-# 3. Console logging
-# 4. Your agents still do all the work
-#
-# ========== COMPLETE BUSINESS FLOW EXPLANATION ==========
-#
-# WHEN CUSTOMER SAYS "YES I WANT TO BOOK":
-# 1. 📞 NOTIFY SUPPLIER +447394642517 via ElevenLabs (fire and forget - don't wait)
-#    - Uses second ElevenLabs agent for supplier calls
-#    - Tells supplier: "New booking in [postcode] for [service]"
-#    - BUSINESS CONTINUES - don't lose money waiting for pickup
-#
-# 2. 📋 CREATE BOOKING IMMEDIATELY via SMP API
-#    - Postcode cleaned: "LS1 4ED" → "LS14ED" (no spaces for API)
-#    - Creates booking reference: WK-[timestamp]
-#    - Calls: smp_tool._run(action="create_booking_quote", postcode="LS14ED", service="grab", firstName="John", phone="07123456789")
-#
-# 3. 📱 SEND PAYMENT SMS via SMP API → Koyeb → Twilio
-#    - Calls: smp_tool._run(action="take_payment", customer_phone="07123456789", quote_id="WK123", amount="85")
-#    - SMP API → Koyeb webhook /api/send-payment-sms → Twilio SMS
-#    - Customer gets: "Pay £85 for booking WK123 - Link: https://pay.wasteking.co.uk/123"
-#
-# 4. 💰 MONEY SECURED - Business complete!
-#    - Only stop if supplier calls back and explicitly says "NO"
-#    - Otherwise assume available and proceed
-#
-# ========== POSTCODE STRUCTURE ==========
-# Input formats accepted: "LS1 4ED", "LS14ED", "M1 1AB", "M11AB"
-# Cleaned for API: Remove spaces, uppercase → "LS14ED", "M11AB"
-# Sent to API: Clean format without spaces
-#
-# ========== RULES FOLLOWED ==========
-# - PDF rules processed by RulesProcessor in each agent
-# - Routing: Only explicit "skip"/"man and van" requests go to those agents
-# - EVERYTHING ELSE → Grab Hire Agent (soil, furniture, general waste, construction)
-# - Man & Van: Automatically rejects heavy items (bricks, concrete, soil)
-# - Grab: Handles all heavy materials (soil, rubble, construction)
-# - Skip: Traditional waste containers only
-# - All agents use conversation context to avoid repeat questions
-#
-# ========== PAYMENT LINK PROCESS ==========
-# SMP API take_payment → Koyeb webhook → Twilio SMS → Customer phone
-# Customer receives clickable payment link in SMS
-# Payment processed through secure WasteKing payment portal
-
 # GLOBAL STATE STORAGE - survives instance recreation
 _GLOBAL_CONVERSATION_STATES = {}
 
@@ -91,10 +43,10 @@ class AgentOrchestrator:
             
             print(f"🔄 Updated Conversation State: {conversation_state}")
             
-            # *** ONLY NEW ADDITION: CHECK FOR BOOKING CONFIRMATION ***
+            # CHECK FOR BOOKING CONFIRMATION
             if self._is_booking_confirmation(message, conversation_state):
-                print("🔥 BOOKING CONFIRMATION DETECTED - CALLING +447394642517")
-                self._call_hardcoded_supplier_async(conversation_state)
+                print("🔥 BOOKING CONFIRMATION DETECTED - CALLING SUPPLIER")
+                self._call_supplier_async(conversation_state)
                 
                 # Return booking confirmation response
                 extracted = conversation_state.get('extracted_info', {})
@@ -217,10 +169,11 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
                 has_recent_pricing and 
                 has_customer_details)
     
-    def _call_hardcoded_supplier_async(self, state: Dict[str, Any]):
-        """CORRECT BUSINESS FLOW: Call supplier to notify, CREATE BOOKING IMMEDIATELY, don't lose business"""
+    def _call_supplier_async(self, state: Dict[str, Any]):
+        """Call supplier to notify, CREATE BOOKING IMMEDIATELY, don't lose business"""
         
-        SUPPLIER_PHONE = "+447394642517"  # HARDCODED
+        # Get supplier phone from environment variable instead of hardcoding
+        supplier_phone = os.getenv('SUPPLIER_PHONE', '+447394642517')
         
         try:
             print(f"🔥 CUSTOMER SAID YES - BUSINESS FLOW: NOTIFY SUPPLIER + CREATE BOOKING")
@@ -236,7 +189,7 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
             
             # STEP 1: Call supplier to NOTIFY (fire and forget - don't wait for response)
             print(f"📞 STEP 1: NOTIFYING SUPPLIER (FIRE AND FORGET)")
-            supplier_result = self._call_supplier_notification(SUPPLIER_PHONE, postcode, service, customer_name)
+            supplier_result = self._call_supplier_notification(supplier_phone, postcode, service, customer_name)
             state['supplier_called'] = supplier_result.get('success', False)
             
             # STEP 2: CREATE BOOKING IMMEDIATELY (don't wait for supplier - take the money!)
@@ -278,13 +231,14 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
             print(f"   👤 Customer: {customer_name}")
             print(f"   💼 PURPOSE: NOTIFICATION (not waiting for confirmation)")
             
-            # Use SECOND ElevenLabs agent for supplier calls
+            # Use ElevenLabs agent for supplier calls
             caller = ElevenLabsSupplierCaller(
                 elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
                 agent_id=os.getenv('ELEVENLABS_SUPPLIER_AGENT_ID', os.getenv('ELEVENLABS_AGENT_ID')),
                 agent_phone_number_id=os.getenv('ELEVENLABS_SUPPLIER_PHONE_ID', os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID'))
             )
             
+            print(f"🔧 ORCHESTRATOR: TOOL CALL - ElevenLabsSupplierCaller.call_supplier_for_availability")
             print(f"🔧 TOOL CALL: caller.call_supplier_for_availability(supplier_phone='{supplier_phone}', service_type='{service}', postcode='{postcode}', date='ASAP')")
             
             # Fire and forget - don't block business on supplier response
@@ -319,9 +273,9 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
             clean_postcode = postcode.replace(' ', '').upper()
             
             booking_params = {
-                'postcode': clean_postcode,  # API expects: "LS14ED" not "LS1 4ED"
-                'service': service,          # "grab", "skip", or "mav"
-                'type': '8yd',              # Default size
+                'postcode': clean_postcode,
+                'service': service,
+                'type': '8yd',
                 'firstName': name,
                 'phone': phone,
                 'booking_ref': booking_ref,
@@ -336,6 +290,7 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
             print(f"   🚛 Service: {service}")
             print(f"   👤 Customer: {name}")
             print(f"   📞 Phone: {phone}")
+            print(f"🔧 ORCHESTRATOR: TOOL CALL - SMPAPITool._run")
             print(f"🔧 TOOL CALL: smp_tool._run(action='create_booking_quote', {booking_params})")
             
             result = smp_tool._run(action="create_booking_quote", **booking_params)
@@ -366,13 +321,9 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
             print(f"   💰 Amount: £{amount}")
             print(f"   🔄 Process: SMP API → Koyeb webhook → Twilio SMS")
             
+            print(f"🔧 ORCHESTRATOR: TOOL CALL - SMPAPITool._run")
             print(f"🔧 TOOL CALL: smp_tool._run(action='take_payment', customer_phone='{customer_phone}', quote_id='{booking_ref}', amount='{amount}', call_sid='orchestrator')")
             
-            # This will:
-            # 1. Call SMP API take_payment action
-            # 2. SMP API calls Koyeb /api/send-payment-sms
-            # 3. Koyeb sends SMS via Twilio
-            # 4. Customer gets: "Pay £85 for booking WK123 - Link: https://pay.wasteking.co.uk/123"
             result = smp_tool._run(
                 action="take_payment",
                 customer_phone=customer_phone,
@@ -444,9 +395,9 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         
         # Extract postcode - CLEAN FORMAT FOR API
         postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # Standard format: M1 1AB
-            r'\b(LS\d{4})\b',  # LS1480 format  
-            r'\b([A-Z]{1,2}\d{1,4})\b'  # Partial postcodes
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',
+            r'\b(LS\d{4})\b',
+            r'\b([A-Z]{1,2}\d{1,4})\b'
         ]
         
         for pattern in postcode_patterns:
@@ -461,10 +412,10 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         
         # Extract phone number
         phone_patterns = [
-            r'\b0\d{10}\b',  # 07823656762
-            r'\b\d{11}\b',   # 07823656762
-            r'\b0\d{4}\s?\d{6}\b',  # 07823 656762
-            r'\b0\d{3}\s?\d{3}\s?\d{4}\b'  # 078 236 56762
+            r'\b0\d{10}\b',
+            r'\b\d{11}\b',
+            r'\b0\d{4}\s?\d{6}\b',
+            r'\b0\d{3}\s?\d{3}\s?\d{4}\b'
         ]
         for pattern in phone_patterns:
             phone_match = re.search(pattern, message)
@@ -475,7 +426,7 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         
         # Extract name
         name_patterns = [
-            r'\bname\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', # My name is John Smith
+            r'\bname\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
             r'\bmy\s+name\s+is\s+([A-Z][a-z]+)\b',
             r'\bi\s+am\s+([A-Z][a-z]+)\b',
             r'\b([A-Z][a-z]+)\b'
@@ -537,19 +488,11 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         state['extracted_info'] = extracted
         
         # Copy key extracted info to top level for easier access
-        if 'postcode' in extracted:
-            state['postcode'] = extracted['postcode']
-        if 'phone' in extracted:
-            state['phone'] = extracted['phone']
-        if 'name' in extracted:
-            state['name'] = extracted['name']
-        if 'waste_type' in extracted:
-            state['waste_type'] = extracted['waste_type']
-        if 'size' in extracted:
-            state['size'] = extracted['size']
-            state['type'] = extracted['size']
-        if 'wants_booking' in extracted:
-            state['wants_booking'] = extracted['wants_booking']
+        for key in ['postcode', 'phone', 'name', 'waste_type', 'size', 'wants_booking']:
+            if key in extracted:
+                state[key] = extracted[key]
+                if key == 'size':
+                    state['type'] = extracted[key]
         
         # Log what we have collected so far
         print(f"✅ STATE UPDATED:")
