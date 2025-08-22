@@ -18,25 +18,46 @@ class SMSTool(BaseTool):
     phone_number: str = Field(default="")
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
+        print(f"📱 SMS TOOL CALLED:")
+        print(f"   🔧 Action: {action}")
+        print(f"   🔧 Parameters: {kwargs}")
+        print(f"   🔧 Twilio Available: {TWILIO_AVAILABLE}")
+        print(f"   🔧 Account SID Set: {'✅' if self.account_sid else '❌'}")
+        print(f"   🔧 Auth Token Set: {'✅' if self.auth_token else '❌'}")
+        
         if not TWILIO_AVAILABLE:
             return {"success": False, "error": "Twilio not available - install twilio package"}
         
         try:
             if action == "send_payment_sms":
-                return self._send_payment_sms(**kwargs)
+                result = self._send_payment_sms(**kwargs)
+                print(f"📱 PAYMENT SMS RESULT: {result}")
+                return result
             elif action == "send_booking_confirmation":
-                return self._send_booking_confirmation(**kwargs)
+                result = self._send_booking_confirmation(**kwargs)
+                print(f"📱 CONFIRMATION SMS RESULT: {result}")
+                return result
             else:
-                return {"success": False, "error": f"Unknown SMS action: {action}"}
+                error_result = {"success": False, "error": f"Unknown SMS action: {action}"}
+                print(f"📱 SMS ERROR: {error_result}")
+                return error_result
         except Exception as e:
-            print(f"❌ SMS Error: {str(e)}")
+            print(f"❌ SMS Tool Exception: {str(e)}")
             return {"success": False, "error": str(e)}
     
     def _send_payment_sms(self, phone: str, amount: str, booking_ref: str, payment_link: str) -> Dict[str, Any]:
         """Send payment SMS to customer"""
         
+        print(f"📱 SENDING PAYMENT SMS:")
+        print(f"   📞 Phone: {phone}")
+        print(f"   💰 Amount: £{amount}")
+        print(f"   📋 Booking Ref: {booking_ref}")
+        print(f"   💳 Payment Link: {payment_link}")
+        
         # Clean and validate phone number
         clean_phone = self._clean_phone_number(phone)
+        print(f"📱 PHONE VALIDATION: {clean_phone}")
+        
         if not clean_phone['valid']:
             return {"success": False, "error": clean_phone['error']}
         
@@ -52,6 +73,7 @@ class SMSTool(BaseTool):
             }
         
         try:
+            print(f"📱 CREATING TWILIO CLIENT...")
             client = Client(self.account_sid, self.auth_token)
             
             message_body = f"""🗑️ WasteKing Payment Required
@@ -63,13 +85,19 @@ class SMSTool(BaseTool):
 
 Thank you for choosing WasteKing!"""
             
+            print(f"📱 SENDING TWILIO MESSAGE:")
+            print(f"   📞 From: {self.phone_number}")
+            print(f"   📞 To: {clean_phone['phone']}")
+            print(f"   💬 Message: {message_body}")
+            
             message = client.messages.create(
                 body=message_body,
                 from_=self.phone_number,
                 to=clean_phone['phone']
             )
             
-            print(f"✅ Payment SMS sent to {clean_phone['phone']}")
+            print(f"✅ Payment SMS sent successfully")
+            print(f"   📱 SMS SID: {message.sid}")
             
             return {
                 "success": True,
