@@ -1,215 +1,236 @@
-import json
-import re
-from typing import Dict, Any, List, Optional
-from langchain.prompts import PromptTemplate
+# agents/orchestrator.py - REPLACEMENT FILE
+# CHANGES: Updated routing logic - Grab handles ALL except mav and skip
 
+import re
+import json
+from typing import Dict, Any, Optional, List
+from datetime import datetime
 
 class AgentOrchestrator:
-    def __init__(self, llm, agents: Dict):
+    """Orchestrates customer interactions between specialized agents"""
+    
+    def __init__(self, llm, agents: Dict[str, Any]):
         self.llm = llm
         self.agents = agents
-        self.conversation_state = {}
+        self.conversation_history = {}
         
-        self.routing_prompt = PromptTemplate(
-            input_variables=["message", "conversation_history", "active_services"],
-            template="""Route this customer message to the appropriate WasteKing agent.
-
-Customer Message: {message}
-Conversation History: {conversation_history}
-Currently Active Services: {active_services}
-
-Available Agents:
-- skip_hire: Handle skip hire, container rental, waste bins, construction waste, bricks, concrete, soil
-- mav: Handle man & van services, collection, clearance, furniture removal, "man van", "man and van"
-- grab_hire: Handle grab lorries, muck away services  
-
-Routing Rules:
-- Skip hire: skip, container, bin, waste disposal, construction waste, bricks, concrete
-- Man & Van: collection, clearance, furniture removal, "man van", "man and van", household items
-- Grab hire: grab lorry, muck away, bulk earth/soil removal
-- If unclear, route to skip_hire as default
-
-Return JSON: {{"primary_agent": "agent_name", "reasoning": "explanation"}}
-
-Be direct and route immediately - don't waste time with long explanations.
-"""
-        )
-        
-        self.routing_chain = self.routing_prompt | self.llm
+        print("✅ AgentOrchestrator initialized")
+        print(f"✅ Available agents: {list(agents.keys())}")
+        print("🎯 ROUTING LOGIC: Grab handles ALL except mav and skip")
     
-    def extract_customer_data(self, message: str) -> Dict[str, str]:
-        """Extract customer data that can be shared across agents"""
-        data = {}
+    def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
+        """Process customer message and route to appropriate agent"""
+        
+        print(f"\n🎯 ORCHESTRATOR: Processing message for {conversation_id}")
+        print(f"📝 Message: {message}")
+        print(f"📋 Context: {context}")
+        
+        try:
+            # Determine which agent should handle this message
+            agent_choice, routing_reason = self._determine_agent(message, context)
+            
+            print(f"🎯 ROUTING TO: {agent_choice.upper()} agent ({routing_reason})")
+            
+            # Get the appropriate agent
+            agent = self.agents.get(agent_choice)
+            if not agent:
+                print(f"❌ Agent '{agent_choice}' not found, defaulting to grab_hire")
+                agent = self.agents.get('grab_hire')
+                agent_choice = 'grab_hire'
+            
+            # Process message with the selected agent
+            response = agent.process_message(message, context)
+            
+            # Update conversation history
+            self._update_conversation_history(conversation_id, message, response, agent_choice)
+            
+            return {
+                "success": True,
+                "response": response,
+                "agent_used": agent_choice,
+                "routing": {
+                    "agent": agent_choice,
+                    "reason": routing_reason,
+                    "message_processed": True
+                },
+                "conversation_id": conversation_id,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            print(f"❌ Orchestrator Error: {str(e)}")
+            return {
+                "success": False,
+                "response": "I'm having a technical issue. What's your postcode and what type of waste do you need collected?",
+                "error": str(e),
+                "agent_used": "fallback",
+                "conversation_id": conversation_id
+            }
+    
+    def _determine_agent(self, message: str, context: Dict = None) -> tuple[str, str]:
+        """CHANGE: Updated routing logic - Grab handles ALL except mav and skip"""
+        
         message_lower = message.lower()
         
-        # Extract postcode with proper UK format
-        postcode_patterns = [
-            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
+        # 1. EXPLICIT SERVICE MENTIONS
+        
+        # Man & Van explicit requests
+        if any(phrase in message_lower for phrase in [
+            'man and van', 'man & van', 'mav', 'removal service', 'house removal', 'office removal'
+        ]):
+            return 'mav', 'explicit_mav_request'
+        
+        # Skip hire explicit requests  
+        if any(phrase in message_lower for phrase in [
+            'skip', 'skip hire', 'container', 'bin hire', 'waste container'
+        ]):
+            return 'skip_hire', 'explicit_skip_request'
+        
+        # Grab hire explicit requests
+        if any(phrase in message_lower for phrase in [
+            'grab', 'grab hire', 'lorry', 'truck', 'grab lorry'
+        ]):
+            return 'grab_hire', 'explicit_grab_request'
+        
+        # 2. MATERIAL-BASED ROUTING
+        
+        materials = self._extract_materials(message)
+        
+        # Light items that COULD be man & van (but they'll check restrictions)
+        light_items = [
+            'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 'wardrobe',
+            'appliances', 'fridge', 'freezer', 'washing machine', 'dishwasher',
+            'bags', 'clothes', 'books', 'boxes', 'household goods', 'office furniture'
         ]
-        for pattern in postcode_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                pc = match.group(1).upper()
-                if len(pc.replace(' ', '')) >= 5:
-                    data['postcode'] = pc
-                    print(f"🔧 ORCHESTRATOR extracted postcode: {pc}")
-                    break
         
-        # Extract waste type for skip hire
-        waste_types = ['construction', 'building', 'renovation', 'garden', 'household', 'mixed', 'bricks', 'concrete', 'soil', 'rubble', 'mortar', 'industrial']
-        found_waste = []
-        for waste_type in waste_types:
-            if waste_type in message_lower:
-                found_waste.append(waste_type)
+        if any(item in materials for item in light_items):
+            # Check if NO heavy items mentioned
+            heavy_items = [
+                'brick', 'bricks', 'concrete', 'soil', 'rubble', 'stone', 'sand', 
+                'gravel', 'construction', 'building', 'demolition', 'hardcore'
+            ]
+            if not any(item in materials for item in heavy_items):
+                return 'mav', 'light_items_suitable_for_mav'
         
-        if found_waste:
-            data['waste_type'] = ', '.join(found_waste)
-            print(f"🔧 ORCHESTRATOR extracted waste type: {data['waste_type']}")
-        
-        # Extract items for man & van
-        mav_items = ['bags', 'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 'books', 'clothes', 'boxes', 'appliances', 'fridge', 'freezer']
-        found_items = []
-        for item in mav_items:
-            if item in message_lower:
-                found_items.append(item)
-        
-        if found_items:
-            data['items'] = ', '.join(found_items)
-            print(f"🔧 ORCHESTRATOR extracted items: {data['items']}")
-        
-        # Extract skip size
-        size_patterns = [r'(\d+)\s*(?:yard|yd)', r'(\d+)yd']
-        for pattern in size_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                data['size'] = f"{match.group(1)}yd"
-                print(f"🔧 ORCHESTRATOR extracted size: {data['size']}")
-                break
-        
-        # Extract name
-        name_patterns = [
-            r'name\s+(?:is\s+)?(\w+)',
-            r'i\'?m\s+(\w+)',
-            r'my\s+name\s+is\s+(\w+)'
+        # Traditional skip waste
+        skip_waste = [
+            'construction waste', 'building waste', 'mixed waste', 'general waste',
+            'household waste', 'garden waste'
         ]
-        for pattern in name_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                data['firstName'] = match.group(1).title()
-                print(f"🔧 ORCHESTRATOR extracted name: {data['firstName']}")
-                break
+        if any(waste in message_lower for waste in skip_waste):
+            return 'skip_hire', 'traditional_skip_waste'
         
-        # Extract phone
-        phone_patterns = [
-            r'phone\s+(?:is\s+)?(\d{11})',
-            r'mobile\s+(?:is\s+)?(\d{11})',
-            r'\b(\d{11})\b'
+        # 3. VOLUME/SIZE INDICATORS
+        
+        # Large volume indicators = grab
+        large_volume_indicators = [
+            'loads of', 'lots of', 'large amount', 'truck full', 'lorry load', 
+            'big job', 'clearance', 'site clearance', 'full house', 'warehouse'
         ]
-        for pattern in phone_patterns:
-            match = re.search(pattern, message)
-            if match:
-                data['phone'] = match.group(1)
-                print(f"🔧 ORCHESTRATOR extracted phone: {data['phone']}")
-                break
+        if any(indicator in message_lower for indicator in large_volume_indicators):
+            return 'grab_hire', 'large_volume_job'
         
-        # Extract email
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        email_match = re.search(email_pattern, message)
-        if email_match:
-            data['emailAddress'] = email_match.group()
-            print(f"🔧 ORCHESTRATOR extracted email: {data['emailAddress']}")
+        # 4. HEAVY MATERIALS = GRAB (as per requirement)
+        
+        heavy_materials = [
+            'soil', 'muck', 'rubble', 'concrete', 'brick', 'bricks', 'stone', 
+            'sand', 'gravel', 'hardcore', 'mortar', 'cement', 'asphalt'
+        ]
+        if any(material in materials for material in heavy_materials):
+            return 'grab_hire', 'heavy_materials_detected'
+        
+        # 5. CONTEXT-BASED ROUTING
+        
+        if context:
+            # If previous service was grab, continue with grab
+            if context.get('last_service') == 'grab':
+                return 'grab_hire', 'continuing_grab_conversation'
             
-        print(f"🔧 ORCHESTRATOR TOTAL EXTRACTED: {data}")
-        return data
+            # If we have pricing info, check what service it was for
+            if context.get('service'):
+                service = context['service']
+                if service == 'mav':
+                    return 'mav', 'continuing_mav_conversation'
+                elif service == 'skip':
+                    return 'skip_hire', 'continuing_skip_conversation'
+                else:
+                    return 'grab_hire', 'continuing_grab_conversation'
+        
+        # 6. PRICING REQUESTS
+        
+        if any(word in message_lower for word in ['price', 'cost', 'quote', 'pricing']):
+            # If materials mentioned, route based on materials
+            if materials:
+                if any(item in materials for item in light_items):
+                    return 'mav', 'pricing_request_light_items'
+                else:
+                    return 'grab_hire', 'pricing_request_general'
+            else:
+                return 'grab_hire', 'pricing_request_no_materials'
+        
+        # 7. DEFAULT FALLBACK - GRAB HANDLES EVERYTHING ELSE
+        return 'grab_hire', 'default_grab_handles_all'
     
-    def process_customer_message(self, message: str, conversation_id: str, call_sid: str = None, elevenlabs_conversation_id: str = None) -> Dict[str, Any]:
-        print(f"🎯 Orchestrator processing: {message}")
+    def _extract_materials(self, message: str) -> List[str]:
+        """Extract materials/items mentioned in message"""
+        message_lower = message.lower()
         
-        # Initialize conversation state
-        if conversation_id not in self.conversation_state:
-            self.conversation_state[conversation_id] = {
-                "active_services": [],
-                "customer_data": {},
-                "conversation_history": [],
-                "booking_data": {}
-            }
+        all_materials = [
+            # Heavy materials
+            'soil', 'muck', 'rubble', 'concrete', 'brick', 'bricks', 'sand', 
+            'gravel', 'stone', 'stones', 'hardcore', 'mortar', 'cement',
+            'construction', 'building', 'demolition', 'asphalt',
+            
+            # Light materials  
+            'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 'wardrobe',
+            'appliances', 'fridge', 'freezer', 'washing machine', 'dishwasher',
+            'bags', 'clothes', 'books', 'boxes', 'household', 'office',
+            
+            # General waste
+            'garden', 'wood', 'metal', 'plastic', 'cardboard', 'general', 'mixed'
+        ]
         
-        state = self.conversation_state[conversation_id]
+        found_materials = []
+        for material in all_materials:
+            if material in message_lower:
+                found_materials.append(material)
         
-        # Add call tracking data
-        if call_sid:
-            state["customer_data"]["call_sid"] = call_sid
-        if elevenlabs_conversation_id:
-            state["customer_data"]["elevenlabs_conversation_id"] = elevenlabs_conversation_id
+        return found_materials
+    
+    def _update_conversation_history(self, conversation_id: str, message: str, 
+                                   response: str, agent_used: str):
+        """Update conversation history"""
+        if conversation_id not in self.conversation_history:
+            self.conversation_history[conversation_id] = []
         
-        # Extract and persist customer data
-        extracted_data = self.extract_customer_data(message)
-        state["customer_data"].update(extracted_data)
+        self.conversation_history[conversation_id].append({
+            "timestamp": datetime.now().isoformat(),
+            "customer_message": message,
+            "agent_response": response,
+            "agent_used": agent_used
+        })
         
-        # Debug: Show what's saved
-        print(f"🔧 SAVED STATE: {state['customer_data']}")
+        # Keep only last 10 messages per conversation
+        if len(self.conversation_history[conversation_id]) > 10:
+            self.conversation_history[conversation_id] = self.conversation_history[conversation_id][-10:]
+    
+    def get_conversation_history(self, conversation_id: str) -> List[Dict]:
+        """Get conversation history for a specific conversation"""
+        return self.conversation_history.get(conversation_id, [])
+    
+    def get_agent_stats(self) -> Dict[str, Any]:
+        """Get statistics about agent usage"""
+        agent_usage = {}
+        total_messages = 0
         
-        state["conversation_history"].append({"type": "customer", "message": message})
-        
-        # Route to appropriate agent
-        routing_decision = self._route_message(message, state)
-        print(f"🎯 Routing to: {routing_decision}")
-        
-        # Process with primary agent
-        primary_response = self._process_with_agent(
-            routing_decision["primary_agent"], 
-            message, 
-            state
-        )
-        
-        print(f"🎯 Agent response: {primary_response}")
-        
-        state["conversation_history"].append({"type": "agent", "message": primary_response})
+        for conv_history in self.conversation_history.values():
+            for entry in conv_history:
+                agent = entry.get('agent_used', 'unknown')
+                agent_usage[agent] = agent_usage.get(agent, 0) + 1
+                total_messages += 1
         
         return {
-            "response": primary_response,
-            "conversation_id": conversation_id,
-            "routing": routing_decision,
-            "state": state
+            "total_messages_processed": total_messages,
+            "agent_usage": agent_usage,
+            "active_conversations": len(self.conversation_history)
         }
-    
-    def _route_message(self, message: str, state: Dict) -> Dict:
-        try:
-            routing_result = self.routing_chain.invoke({
-                "message": message,
-                "conversation_history": json.dumps(state["conversation_history"][-5:]),
-                "active_services": json.dumps(state["active_services"])
-            })
-            
-            # Handle the response format
-            if isinstance(routing_result, str):
-                return json.loads(routing_result)
-            elif hasattr(routing_result, 'content'):
-                return json.loads(routing_result.content)
-            else:
-                return routing_result
-        except Exception as e:
-            print(f"❌ Routing error: {e}")
-            # Keyword-based routing fallback
-            message_lower = message.lower()
-            if any(word in message_lower for word in ["man", "van", "collection", "clearance", "furniture"]):
-                return {"primary_agent": "mav", "reasoning": "keyword_fallback"}
-            elif any(word in message_lower for word in ["grab", "lorry", "wheeler", "muck"]):
-                return {"primary_agent": "grab_hire", "reasoning": "keyword_fallback"}
-            else:
-                return {"primary_agent": "skip_hire", "reasoning": "default_fallback"}
-    
-    def _process_with_agent(self, agent_name: str, message: str, state: Dict) -> str:
-        print(f"🤖 Processing with {agent_name} agent")
-        
-        if agent_name in self.agents:
-            try:
-                response = self.agents[agent_name].process_message(message, state["customer_data"])
-                return response
-            except Exception as e:
-                print(f"❌ Agent {agent_name} error: {e}")
-                return f"Hello! I'm here to help with {agent_name.replace('_', ' ')}. How can I assist you today?"
-        else:
-            print(f"❌ Agent {agent_name} not found")
-            return "Hello! How can I help you today?"
