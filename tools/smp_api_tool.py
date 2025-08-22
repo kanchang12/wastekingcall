@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import time
+import re
 from typing import Dict, Any, Optional
 from langchain.tools import BaseTool
 from pydantic import Field
@@ -205,8 +206,7 @@ class SMPAPITool(BaseTool):
                 payment_link = payment_response['quote']['paymentLink']
                 price = payment_response['quote'].get('price', '0')
             else:
-                payment_link = "https://www.paypal.com/ncp/payment/BQ82GUU9VSKYN"  # Fallback
-                price = "50"  # Default
+                return {"success": False, "error": "No payment link available"}
 
             return {
                 "success": True,
@@ -271,130 +271,8 @@ class SMPAPITool(BaseTool):
             elif not phone.startswith('+'):
                 phone = f"+44{phone}"
                 
-            import re
-            if not re.match(r'^\+44\d{9,10}
-    
-    def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
-                      booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Makes actual call to supplier using ElevenLabs"""
-        
-        # Validate required parameters
-        if not supplier_phone:
-            return {"success": False, "error": "Missing required parameter: supplier_phone"}
-        if not supplier_name:
-            return {"success": False, "error": "Missing required parameter: supplier_name"}
-        if not booking_ref:
-            return {"success": False, "error": "Missing required parameter: booking_ref"}
-        if not message:
-            return {"success": False, "error": "Missing required parameter: message"}
-            
-        print(f"📞 Calling supplier {supplier_phone}")
-        
-        try:
-            caller = ElevenLabsSupplierCaller(
-                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
-                agent_id=os.getenv('ELEVENLABS_AGENT_ID'),
-                agent_phone_number_id=os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID')
-            )
-            
-            # Create booking details for the call
-            booking_details = {
-                "booking_ref": booking_ref,
-                "supplier_name": supplier_name,
-                "message": message,
-                "customer_name": kwargs.get("customer_name", ""),
-                "customer_contact": kwargs.get("customer_phone", "")
-            }
-            
-            # Create SMP response format for the caller
-            smp_response = {
-                "success": True, 
-                "supplier_phone": supplier_phone,
-                "service_type": kwargs.get("service", ""),
-                "postcode": kwargs.get("postcode", ""),
-                "price": kwargs.get("price", ""),
-                "booking_ref": booking_ref
-            }
-            
-            result = caller.call_supplier_from_smp_response(smp_response, booking_details)
-            
-            return {
-                "success": result.get("success", False),
-                "call_made": True,
-                "supplier_name": supplier_name,
-                "phone_called": supplier_phone,
-                "booking_ref": booking_ref,
-                "conversation_id": result.get("conversation_id"),
-                "call_sid": result.get("call_sid"),
-                "message": f"Called {supplier_name} successfully" if result.get("success") else f"Call failed: {result.get('error', 'Unknown error')}"
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Call failed: {str(e)}",
-                "call_made": False
-            }
-    
-    def _check_supplier_availability(self, postcode: Optional[str] = None, service: Optional[str] = None, 
-                                   type_: Optional[str] = None, date: str = None, **kwargs) -> Dict[str, Any]:
-        """Check supplier availability and call them if needed"""
-        
-        # Validate required parameters
-        if not postcode:
-            return {"success": False, "error": "Missing required parameter: postcode"}
-        if not service:
-            return {"success": False, "error": "Missing required parameter: service"}
-        if not type_:
-            return {"success": False, "error": "Missing required parameter: type_"}
-            
-        # First get pricing to get supplier details
-        pricing_result = self._get_pricing(postcode=postcode, service=service, type=type_, **kwargs)
-        
-        if not pricing_result.get("success"):
-            return pricing_result
-        
-        supplier_phone = pricing_result.get("supplier_phone")
-        supplier_name = pricing_result.get("supplier_name")
-        
-        if not supplier_phone:
-            return {"success": False, "error": "No supplier phone number available"}
-        
-        # Call supplier to check availability
-        try:
-            caller = ElevenLabsSupplierCaller(
-                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
-                agent_id=os.getenv('ELEVENLABS_AGENT_ID'),
-                agent_phone_number_id=os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID')
-            )
-            
-            call_result = caller.call_supplier_for_availability(
-                supplier_phone="07823656907",
-                service_type=service,
-                postcode=postcode,
-                date=date or "ASAP"
-            )
-            
-            return {
-                "success": call_result.get("success", False),
-                "availability": "checking" if call_result.get("success") else "unavailable",
-                "message": f"Called {supplier_name} to check availability",
-                "booking_ref": pricing_result.get("booking_ref"),
-                "price": pricing_result.get("price"),
-                "supplier_phone": supplier_phone,
-                "supplier_name": supplier_name,
-                "conversation_id": call_result.get("conversation_id"),
-                "call_sid": call_result.get("call_sid")
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Availability check failed: {str(e)}",
-                "booking_ref": pricing_result.get("booking_ref"),
-                "price": pricing_result.get("price"),
-                "supplier_phone": supplier_phone
-            }, phone):
+            phone_pattern = r'^\+44\d{9,10}$'
+            if not re.match(phone_pattern, phone):
                 return {"success": False, "message": "Invalid UK phone number format"}
             
             # Get Twilio credentials
