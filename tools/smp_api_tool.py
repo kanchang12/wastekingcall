@@ -14,10 +14,13 @@ class SMPAPITool(BaseTool):
     WasteKing API for pricing, booking quotes, payment processing, and supplier calling.
     
     Required parameters for each action:
-    - get_pricing: postcode, service, type (e.g., postcode="LS14ED", service="skip-hire", type="8yd")
+    - get_pricing: postcode, service, type (e.g., postcode="LS14ED", service="skip", type="8yd")
     - create_booking_quote: postcode, service, type, firstName, phone, booking_ref
     - take_payment: call_sid, customer_phone, quote_id, amount
     - call_supplier: supplier_phone, supplier_name, booking_ref, message
+    
+    Service types: "skip", "mav", "grab"
+    Size types: "8yd", "6yd", "4yd", etc.
     """
     base_url: str = Field(default="")  # Not needed anymore
     access_token: str = Field(default="")  # Not needed anymore
@@ -157,7 +160,7 @@ class SMPAPITool(BaseTool):
     
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Create booking quote - Try both POST and GET methods"""
+        """Create booking quote - Try both POST and GET methods with correct service names"""
         
         # Validate required parameters
         if not type:
@@ -172,15 +175,34 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: phone"}
         if not kwargs.get('booking_ref'):
             return {"success": False, "error": "Missing required parameter: booking_ref"}
+        
+        # Normalize service names to match WasteKing API
+        service_mapping = {
+            "skip-hire": "skip",
+            "skip_hire": "skip", 
+            "skip hire": "skip",
+            "man-and-van": "mav",
+            "man_and_van": "mav",
+            "man and van": "mav",
+            "grab-hire": "grab",
+            "grab_hire": "grab",
+            "grab hire": "grab"
+        }
+        
+        # Normalize the service name
+        normalized_service = service_mapping.get(service.lower(), service.lower())
+        
+        # Clean postcode - remove spaces and uppercase
+        postcode = postcode.upper().replace(" ", "").strip()
             
-        print(f"📋 Creating booking quote for {service} {type} in {postcode}")
+        print(f"📋 Creating booking quote for {normalized_service} {type} in {postcode}")
         
         try:
             # Create the payload that matches what the Flask app expects
             data_payload = {
                 "booking_ref": kwargs.get("booking_ref"),
                 "postcode": postcode,
-                "service": service,
+                "service": normalized_service,
                 "type": type,
                 "firstName": kwargs.get("firstName", ""),
                 "phone": kwargs.get("phone", ""),
@@ -338,9 +360,25 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: service"}
         if not type:
             return {"success": False, "error": "Missing required parameter: type"}
+        
+        # Normalize service names to match WasteKing API
+        service_mapping = {
+            "skip-hire": "skip",
+            "skip_hire": "skip", 
+            "skip hire": "skip",
+            "man-and-van": "mav",
+            "man_and_van": "mav",
+            "man and van": "mav",
+            "grab-hire": "grab",
+            "grab_hire": "grab",
+            "grab hire": "grab"
+        }
+        
+        # Normalize the service name
+        normalized_service = service_mapping.get(service.lower(), service.lower())
             
         # First get pricing to get supplier details
-        pricing_result = self._get_pricing(postcode=postcode, service=service, type=type, **kwargs)
+        pricing_result = self._get_pricing(postcode=postcode, service=normalized_service, type=type, **kwargs)
         
         if not pricing_result.get("success"):
             return pricing_result
@@ -363,7 +401,7 @@ class SMPAPITool(BaseTool):
             
             call_result = caller.call_supplier_for_availability(
                 supplier_phone=supplier_phone,
-                service_type=service,
+                service_type=normalized_service,
                 postcode=postcode,
                 date=date or "ASAP"
             )
