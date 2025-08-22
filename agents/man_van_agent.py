@@ -1,3 +1,4 @@
+# FIXED ManVanAgent
 import json 
 import re
 from typing import Dict, Any, List
@@ -12,63 +13,49 @@ class ManVanAgent:
         self.tools = tools
         self.rules_processor = RulesProcessor()
         rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        # Escape curly braces to prevent template variable conflicts
         rule_text = rule_text.replace("{", "{{").replace("}", "}}")
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Man and Van specialist - friendly, British, and RULE-FOLLOWING!
+            ("system", """You are the WasteKing Man and Van specialist - friendly, British, and GET PRICING NOW!
 
-PERSONALITY - CRITICAL:
-- Start with: "Alright love!" or "Hello there!" or "Right then!" 
-- Use British phrases: "Brilliant!", "Lovely!", "Smashing!", "Perfect!"
-- Be chatty: "How's your day going?", "Lovely to hear from you!"
-- Sound human and warm, not robotic
+CRITICAL API PARAMETERS:
+- service: "mav"
+- type: "4yd" or "6yd" or "8yd" or "12yd"
+- postcode: "LS14ED" (no spaces)
 
-NEW WORKFLOW - FOLLOW EXACTLY:
-1. FIRST: Collect ALL info (name, postcode, items, collection details)
-2. SECOND: Give the price immediately using smp_api
-3. THIRD: Ask "Shall I book this for you now?"
-4. FOURTH: Handle any objections (price, timing, etc)
-5. FIFTH: Complete the booking
+MANDATORY API CALL:
+smp_api(action="get_pricing", postcode="LS14ED", service="mav", type="6yd")
 
-BUSINESS RULES - FOLLOW EXACTLY:
-1. ALWAYS collect NAME, POSTCODE, ITEMS LIST before pricing
-2. Man and Van includes collection AND disposal
-3. We do ALL the loading for customers
-4. Heavy items (dumbbells, kettlebells) may have surcharges
-5. Access charges for upper floors
-6. Upholstered furniture requires special disposal (EA regulations)
+IMMEDIATE ACTION:
+- If you have postcode + items: CALL smp_api IMMEDIATELY
+- Use service="mav" ALWAYS
 
-QUALIFICATION PROCESS:
-1. Extract ALL available info from the customer message first
-2. If you have name, postcode, and items - GET PRICING IMMEDIATELY
-3. If missing any critical info, ask for it quickly then get pricing
-4. Always give the price before asking anything else
+PERSONALITY:
+- Start with: "Alright love!" or "Right then!"
+- Get pricing first, chat later
 
-PRICING FLOW:
-- Once you have the basics, call smp_api with: action="get_pricing", postcode=postcode, service="mav", type=estimated_size
-- Give the price immediately: "Right then [name]! For collecting [items] from [postcode], that will be £[price]."
-- Then ask: "Shall I book this for you now?"
+WORKFLOW:
+1. Extract postcode, items from message
+2. Estimate size based on items
+3. CALL smp_api with service="mav" immediately
+4. Give price
 
 VOLUME ESTIMATION:
-- Few items (1-3 bags, small furniture) equals 4yd
-- Medium load (3-6 bags, some furniture) equals 6yd  
-- Large load (6+ bags, multiple furniture) equals 8yd
-- Very large (house clearance) equals 12yd
+- Few items (1-3 bags) = 4yd
+- Medium load (3-6 bags) = 6yd  
+- Large load (6+ bags) = 8yd
+- House clearance = 12yd
 
-OBJECTION HANDLING:
-- If price objection: Explain we do all loading, disposal included
-- If timing objection: Offer alternatives
-- If access objection: Explain upper floor charges
+Follow team rules:
+""" + rule_text + """
 
-RESPONSES:
-- Always confirm: "We'll do all the loading and disposal for you"
-- Mention surcharges upfront if heavy items
-- Explain EA regulations for upholstered furniture
-
-NEVER skip qualification questions. Always get pricing before asking to book.
+CRITICAL: Call smp_api with service="mav" when you have postcode + items.
 """),
-            ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
+            ("human", """Customer: {input}
+
+Extracted data: {extracted_info}
+
+INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="mav"."""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -82,7 +69,7 @@ NEVER skip qualification questions. Always get pricing before asking to book.
             agent=self.agent,
             tools=self.tools,
             verbose=True,
-            max_iterations=3
+            max_iterations=5
         )
     
     def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
@@ -104,22 +91,27 @@ NEVER skip qualification questions. Always get pricing before asking to book.
         if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode
+        # Extract postcode - NO SPACES
+        postcode_found = False
         postcode_patterns = [
-            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
+            r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
+            r'postcode\s*:?\s*([A-Z0-9]+)',
+            r'at\s+([A-Z0-9]{4,8})',
+            r'in\s+([A-Z0-9]{4,8})',
         ]
+        
         for pattern in postcode_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                pc = match.group(1).upper()
-                if len(pc.replace(' ', '')) >= 5:
-                    if ' ' not in pc and len(pc) >= 6:
-                        data['postcode'] = pc[:-3] + ' ' + pc[-3:]
-                    else:
-                        data['postcode'] = pc
+            matches = re.findall(pattern, message.upper())
+            for match in matches:
+                clean_match = match.strip().replace(' ', '')
+                if len(clean_match) >= 4 and any(c.isdigit() for c in clean_match) and any(c.isalpha() for c in clean_match):
+                    data['postcode'] = clean_match  # LS14ED
+                    postcode_found = True
                     break
-        if 'postcode' not in data:
+            if postcode_found:
+                break
+        
+        if not postcode_found:
             missing.append('postcode')
         
         # Extract items
@@ -130,14 +122,7 @@ NEVER skip qualification questions. Always get pricing before asking to book.
         ]
         
         found_items = []
-        extra_items = []
         message_lower = message.lower()
-        
-        # Check for extra items that incur surcharges
-        surcharge_items = ['fridge', 'freezer', 'mattress', 'sofa', 'furniture']
-        for item in surcharge_items:
-            if item in message_lower:
-                extra_items.append(item)
         
         for item in common_items:
             if item in message_lower:
@@ -148,7 +133,6 @@ NEVER skip qualification questions. Always get pricing before asking to book.
         quantity_patterns = [
             r'(\d+)\s*(?:bags?|boxes?|items?)',
             r'(few|several|many)\s*(?:bags?|boxes?|items?)',
-            r'(one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:bags?|boxes?|items?)'
         ]
         
         for pattern in quantity_patterns:
@@ -165,32 +149,20 @@ NEVER skip qualification questions. Always get pricing before asking to book.
         else:
             missing.append('items')
         
-        if extra_items:
-            data['extra_items'] = ','.join(extra_items)
-        
-        # Estimate volume based on items
+        # Estimate volume
         volume_score = 0
         if 'items' in data:
             items_text = data['items'].lower()
-            # Count bags/boxes
-            bag_matches = re.findall(r'(\d+).*?bags?', items_text)
+            bag_matches = re.findall(r'(\d+)', items_text)
             for match in bag_matches:
                 volume_score += int(match) if match.isdigit() else 3
             
-            # Add for furniture
-            furniture_items = ['sofa', 'chair', 'table', 'bed', 'mattress', 'appliances']
+            furniture_items = ['sofa', 'chair', 'table', 'bed', 'mattress']
             for item in furniture_items:
                 if item in items_text:
                     volume_score += 5
-            
-            # Add for heavy items
-            heavy_items = ['dumbbells', 'kettlebell', 'weights']
-            for item in heavy_items:
-                if item in items_text:
-                    volume_score += 2
-                    data['has_heavy_items'] = True
         
-        # Convert volume score to size
+        # Convert to size
         if volume_score <= 3:
             data['type'] = '4yd'
         elif volume_score <= 8:
@@ -199,20 +171,6 @@ NEVER skip qualification questions. Always get pricing before asking to book.
             data['type'] = '8yd'
         else:
             data['type'] = '12yd'
-        
-        # Extract access information
-        access_keywords = ['floor', 'stairs', 'lift', 'ground', 'first', 'second', 'third']
-        access_info = []
-        for keyword in access_keywords:
-            if keyword in message_lower:
-                access_info.append(keyword)
-        
-        if access_info:
-            data['access_info'] = ', '.join(access_info)
-            # Check for upper floor charges
-            upper_floors = ['first', 'second', 'third', 'fourth', 'fifth']
-            if any(floor in message_lower for floor in upper_floors):
-                data['upper_floor_charge'] = True
         
         # Extract phone
         phone_patterns = [
@@ -232,26 +190,28 @@ NEVER skip qualification questions. Always get pricing before asking to book.
         if email_match:
             data['emailAddress'] = email_match.group()
         
+        data['service'] = 'mav'  # CORRECT SERVICE
         data['missing_info'] = missing
-        data['service'] = 'mav'
+        
+        # Ready for pricing check
+        has_postcode = 'postcode' in data
+        has_items = 'items' in data
+        data['ready_for_pricing'] = has_postcode and has_items
+        
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
         extracted = self.extract_and_validate_data(message)
         
-        # Create extracted info summary for the prompt
         extracted_info = f"""
-Name: {extracted.get('firstName', 'NOT PROVIDED')}
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Items: {extracted.get('items', 'NOT PROVIDED')}
-Estimated Size: {extracted.get('type', '8yd')}
-Extra Items: {extracted.get('extra_items', 'none')}
-Heavy Items: {extracted.get('has_heavy_items', False)}
-Upper Floor: {extracted.get('upper_floor_charge', False)}
-Access Info: {extracted.get('access_info', 'none')}
-Phone: {extracted.get('phone', 'NOT PROVIDED')}
-Email: {extracted.get('emailAddress', 'NOT PROVIDED')}
-Missing Info: {extracted.get('missing_info', [])}
+Estimated Size: {extracted.get('type', '6yd')}
+Service: mav
+Ready for Pricing: {extracted.get('ready_for_pricing', False)}
+Missing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'items']]}
+
+*** API Parameters: postcode={extracted.get('postcode', 'NOT PROVIDED')}, service=mav, type={extracted.get('type', '6yd')} ***
 """
         
         agent_input = {
@@ -263,8 +223,200 @@ Missing Info: {extracted.get('missing_info', [])}
             for k, v in context.items():
                 agent_input[k] = v
                 
-        # Add extracted data for tools
         agent_input.update(extracted)
+        response = self.executor.invoke(agent_input)
+        return response["output"]
 
+
+# FIXED GrabHireAgent
+class GrabHireAgent:
+    def __init__(self, llm, tools: List[BaseTool]):
+        self.llm = llm
+        self.tools = tools
+        self.rules_processor = RulesProcessor()
+        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
+        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and GET PRICING NOW!
+
+CRITICAL API PARAMETERS:
+- service: "grab"
+- type: "8yd" (default for grab)
+- postcode: "LS14ED" (no spaces)
+
+MANDATORY API CALL:
+smp_api(action="get_pricing", postcode="LS14ED", service="grab", type="8yd")
+
+IMMEDIATE ACTION:
+- If you have postcode + material type: CALL smp_api IMMEDIATELY
+- Use service="grab" ALWAYS
+
+PERSONALITY:
+- Start with: "Alright love!" or "Right then!"
+- Get pricing first
+
+WORKFLOW:
+1. Extract postcode, material type from message
+2. CALL smp_api with service="grab" immediately
+3. Give price
+
+MATERIAL RULES:
+- Heavy materials (soil, muck, rubble) = grab lorry ideal
+- Light materials = suggest skip or MAV instead
+
+Follow team rules:
+""" + rule_text + """
+
+CRITICAL: Call smp_api with service="grab" when you have postcode + material.
+"""),
+            ("human", """Customer: {input}
+
+Extracted data: {extracted_info}
+
+INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="grab"."""),
+            ("placeholder", "{agent_scratchpad}")
+        ])
+        
+        self.agent = create_openai_functions_agent(
+            llm=self.llm,
+            tools=self.tools,
+            prompt=self.prompt
+        )
+        
+        self.executor = AgentExecutor(
+            agent=self.agent,
+            tools=self.tools,
+            verbose=True,
+            max_iterations=5
+        )
+    
+    def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
+        """Extract customer data and check what's missing"""
+        data = {}
+        missing = []
+        
+        # Extract name
+        name_patterns = [
+            r'name\s+(?:is\s+)?(\w+)',
+            r'i\'?m\s+(\w+)',
+            r'my\s+name\s+is\s+(\w+)'
+        ]
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                data['firstName'] = match.group(1).title()
+                break
+        if 'firstName' not in data:
+            missing.append('name')
+        
+        # Extract postcode - NO SPACES
+        postcode_found = False
+        postcode_patterns = [
+            r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
+            r'postcode\s*:?\s*([A-Z0-9]+)',
+            r'at\s+([A-Z0-9]{4,8})',
+            r'in\s+([A-Z0-9]{4,8})',
+        ]
+        
+        for pattern in postcode_patterns:
+            matches = re.findall(pattern, message.upper())
+            for match in matches:
+                clean_match = match.strip().replace(' ', '')
+                if len(clean_match) >= 4 and any(c.isdigit() for c in clean_match) and any(c.isalpha() for c in clean_match):
+                    data['postcode'] = clean_match  # LS14ED
+                    postcode_found = True
+                    break
+            if postcode_found:
+                break
+        
+        if not postcode_found:
+            missing.append('postcode')
+        
+        # Extract material type
+        material_keywords = {
+            'soil': 'heavy',
+            'muck': 'heavy',
+            'rubble': 'heavy',
+            'hardcore': 'heavy',
+            'sand': 'heavy',
+            'gravel': 'heavy',
+            'concrete': 'heavy',
+            'stone': 'heavy',
+            'household': 'light',
+            'general': 'light',
+            'office': 'light'
+        }
+        
+        message_lower = message.lower()
+        found_material = None
+        material_category = None
+        
+        for keyword, category in material_keywords.items():
+            if keyword in message_lower:
+                found_material = keyword
+                material_category = category
+                break
+        
+        if found_material:
+            data['material_type'] = found_material
+            data['material_category'] = material_category
+        else:
+            missing.append('material_type')
+        
+        # Extract phone
+        phone_patterns = [
+            r'phone\s+(?:is\s+)?(\d{11})',
+            r'mobile\s+(?:is\s+)?(\d{11})',
+            r'\b(\d{11})\b'
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, message)
+            if match:
+                data['phone'] = match.group(1)
+                break
+        
+        # Extract email
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        email_match = re.search(email_pattern, message)
+        if email_match:
+            data['emailAddress'] = email_match.group()
+        
+        data['type'] = '8yd'  # Default for grab
+        data['service'] = 'grab'  # CORRECT SERVICE
+        data['missing_info'] = missing
+        
+        # Ready for pricing check
+        has_postcode = 'postcode' in data
+        has_material = 'material_type' in data
+        data['ready_for_pricing'] = has_postcode and has_material
+        
+        return data
+    
+    def process_message(self, message: str, context: Dict = None) -> str:
+        extracted = self.extract_and_validate_data(message)
+        
+        extracted_info = f"""
+Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
+Material Type: {extracted.get('material_type', 'NOT PROVIDED')}
+Material Category: {extracted.get('material_category', 'unknown')}
+Service: grab
+Type: 8yd
+Ready for Pricing: {extracted.get('ready_for_pricing', False)}
+Missing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'material_type']]}
+
+*** API Parameters: postcode={extracted.get('postcode', 'NOT PROVIDED')}, service=grab, type=8yd ***
+"""
+        
+        agent_input = {
+            "input": message,
+            "extracted_info": extracted_info
+        }
+        
+        if context:
+            for k, v in context.items():
+                agent_input[k] = v
+                
+        agent_input.update(extracted)
         response = self.executor.invoke(agent_input)
         return response["output"]
