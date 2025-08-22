@@ -14,21 +14,28 @@ class ManVanAgent:
         self.llm = llm
         self.tools = tools
         
-        # Simple prompt - no complex PDF rules
+        # RESTORED: PDF rule book integration
+        self.rules_processor = RulesProcessor()
+        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
+        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+        
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Man & Van agent.
+            ("system", """You are a Man & Van agent with PDF RULES.
 
 HEAVY ITEMS RULE:
 Man & Van CANNOT handle: bricks, concrete, soil, rubble, sand, stone
 
 If heavy items detected: "Sorry mate, heavy materials need Skip Hire service."
 
+RULES FROM PDF KNOWLEDGE BASE:
+""" + rule_text + """
+
 WORKFLOW:
 1. Check for heavy items FIRST - if found, REFUSE
 2. Get pricing or create booking as requested
 3. Ask for missing info if needed
 
-Be helpful and direct."""),
+Follow PDF rules above. Be helpful and direct."""),
             ("human", "Customer: {input}\n\nPostcode: {postcode}\nItems: {items}"),
             ("placeholder", "{agent_scratchpad}")
         ])
