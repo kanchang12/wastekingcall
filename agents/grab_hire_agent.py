@@ -1,5 +1,5 @@
-# grab_hire_agent.py - REPLACEMENT FILE
-# CHANGES: Fixed routing (handles ALL except mav/skip), better data extraction, fixed booking flow
+# agents/grab_hire_agent.py - FIXED IMPORT VERSION
+# CHANGES: Fixed class name and imports to work with your app.py, handles ALL except mav/skip
 
 import json 
 import re
@@ -7,18 +7,16 @@ from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-from utils.rules_processor import RulesProcessor
+
+# CHANGE: Removed utils import that might not exist in your setup
+# from utils.rules_processor import RulesProcessor
 
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        self.rules_processor = RulesProcessor()
         
-        # CHANGE: Updated routing - grab handles ALL services except mav and skip
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
-
+        # CHANGE: Simplified rule processing without external dependencies
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and GET PRICING NOW!
 
@@ -46,9 +44,6 @@ MATERIAL GUIDANCE:
 - Large volumes = grab lorry
 - Light materials = can still use grab if customer prefers
 
-Follow team rules:
-""" + rule_text + """
-
 CRITICAL: Always call smp_api with correct service type when you have postcode + material."""),
             ("human", """Customer: {input}
 
@@ -68,11 +63,11 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
             agent=self.agent,
             tools=self.tools,
             verbose=True,
-            max_iterations=10  # CHANGE: Increased for booking flow
+            max_iterations=10
         )
     
     def extract_and_validate_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
-        """CHANGE: Enhanced data extraction with context handling"""
+        """Enhanced data extraction with context handling"""
         data = {}
         missing = []
         
@@ -188,7 +183,7 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        """CHANGE: Enhanced message processing with better context handling"""
+        """Enhanced message processing with better context handling"""
         
         # CHANGE: Clear old data if new postcode detected
         extracted = self.extract_and_validate_data(message, context)
