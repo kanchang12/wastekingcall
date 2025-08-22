@@ -205,12 +205,10 @@ class SMPAPITool(BaseTool):
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
         try:
-            # Get booking ref from kwargs or create new one
+            # MUST have booking ref from previous step
             booking_ref = kwargs.get('booking_ref')
             if not booking_ref:
-                booking_ref = self._create_wasteking_booking()
-                if not booking_ref:
-                    return {"success": False, "message": "Failed to create booking"}
+                return {"success": False, "message": "Missing booking_ref from previous pricing step"}
 
             # STEP 3: Update with firstName and phone to get booking link
             payment_payload = {
