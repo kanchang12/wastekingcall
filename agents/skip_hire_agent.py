@@ -1,5 +1,5 @@
-# agents/skip_hire_agent.py - FIXED BOOKING LOGIC
-# CHANGES: Fixed to recognize booking requests and create actual bookings
+# agents/skip_hire_agent.py - WORKING BOOKING VERSION
+# CHANGES: Aggressive booking detection - if customer provides name/phone = BOOK
 
 import json 
 import re
@@ -16,22 +16,18 @@ class SkipHireAgent:
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Skip Hire agent. Be FAST and DIRECT.
 
-CRITICAL WORKFLOW:
-1. If customer says "book" or wants to book: IMMEDIATELY call smp_api with action="create_booking_quote"
-2. If just asking for price: Call smp_api with action="get_pricing" then ask "Shall I book this for you?"
+CRITICAL RULE: If customer provides NAME or PHONE + postcode + waste = THEY WANT TO BOOK
+
+WORKFLOW:
+1. Customer provides personal info (name/phone) + postcode + waste → IMMEDIATELY call create_booking_quote
+2. Customer just wants price → call get_pricing then ask to book
 3. Missing data → Ask once
 
-BOOKING KEYWORDS: book, booking, confirm, yes book it, proceed, go ahead, arrange
-
 API CALLS:
-- For pricing: smp_api(action="get_pricing", postcode=X, service="skip", type="8yd")
-- For booking: smp_api(action="create_booking_quote", postcode=X, service="skip", type="8yd", firstName=X, phone=X, booking_ref=X)
+- BOOKING: smp_api(action="create_booking_quote", postcode=X, service="skip", type="8yd", firstName=X, phone=X, booking_ref=X)
+- PRICING: smp_api(action="get_pricing", postcode=X, service="skip", type="8yd")
 
-AFTER PRICING: Always ask "Shall I book this skip for you?"
-
-SKIP SIZES: 4yd, 6yd, 8yd, 12yd (default 8yd)
-
-Be direct. Get price. Ask to book. Create booking if confirmed."""),
+IMPORTANT: Name/phone + postcode + waste = AUTOMATIC BOOKING"""),
             ("human", "Customer: {input}\n\nData: {extracted_info}"),
             ("placeholder", "{agent_scratchpad}")
         ])
@@ -40,25 +36,32 @@ Be direct. Get price. Ask to book. Create booking if confirmed."""),
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=10)
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        """Enhanced processing with booking recognition"""
+        """SIMPLE booking detection - if they give personal info, they want to book"""
         
-        # Extract data with context
+        # Extract data
         extracted_data = self._extract_data(message, context)
         
         print(f"🔧 SKIP DATA: {json.dumps(extracted_data, indent=2)}")
         
-        # Check if this is a booking request
-        is_booking_request = self._is_booking_request(message)
-        
-        # Check if ready for API call
         postcode = extracted_data.get('postcode')
         waste_type = extracted_data.get('waste_type')
+        has_name = bool(extracted_data.get('firstName'))
+        has_phone = bool(extracted_data.get('phone'))
+        
+        # SIMPLE RULE: Personal info + postcode + waste = BOOK
+        should_book = (has_name or has_phone) and postcode and waste_type
+        
+        print(f"🎯 BOOKING DECISION:")
+        print(f"   - Has name: {has_name} ({extracted_data.get('firstName')})")
+        print(f"   - Has phone: {has_phone} ({extracted_data.get('phone')})")
+        print(f"   - Has postcode: {bool(postcode)} ({postcode})")
+        print(f"   - Has waste: {bool(waste_type)} ({waste_type})")
+        print(f"   - SHOULD BOOK: {should_book}")
         
         if postcode and waste_type:
-            print(f"🔧 READY FOR API - {'BOOKING' if is_booking_request else 'PRICING'}")
+            action = "create_booking_quote" if should_book else "get_pricing"
             
-            # Determine action based on whether it's a booking request
-            action = "create_booking_quote" if is_booking_request else "get_pricing"
+            print(f"🔧 READY FOR API - {'🎯 BOOKING' if should_book else 'PRICING'} (action: {action})")
             
             extracted_info = f"""
 Postcode: {postcode}
@@ -68,7 +71,7 @@ Type: {extracted_data.get('size', '8yd')}
 Customer Name: {extracted_data.get('firstName', 'NOT PROVIDED')}
 Customer Phone: {extracted_data.get('phone', 'NOT PROVIDED')}
 Action: {action}
-Is Booking Request: {is_booking_request}
+Should Book: {should_book}
 Ready for API: True
 """
             
@@ -82,131 +85,82 @@ Ready for API: True
             response = self.executor.invoke(agent_input)
             return response["output"]
         
-        # Missing data - ask directly
+        # Missing data
         if not postcode:
-            return "I need your postcode to get skip hire pricing. What's your postcode?"
-        
+            return "What's your postcode?"
         if not waste_type:
-            return "What type of waste do you have? (construction, garden, household, etc.)"
+            return "What type of waste?"
         
-        return "Let me get you a skip hire quote."
-    
-    def _is_booking_request(self, message: str) -> bool:
-        """Check if customer wants to book (not just get pricing)"""
-        message_lower = message.lower()
-        
-        booking_keywords = [
-            'book', 'booking', 'confirm', 'yes book', 'proceed', 'go ahead', 
-            'arrange', 'order', 'want to book', 'please book', 'book it',
-            'yes please', 'confirm booking', 'make booking'
-        ]
-        
-        return any(keyword in message_lower for keyword in booking_keywords)
+        return "Let me get you a quote."
     
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
-        """Enhanced data extraction with context handling"""
+        """Extract all data from message"""
         data = {}
         
-        # Check context first
+        # Context first
         if context:
             for key in ['postcode', 'firstName', 'phone', 'emailAddress', 'waste_type']:
                 if context.get(key):
                     data[key] = context[key]
         
         # Extract postcode
-        postcode = self._get_postcode(message, context)
-        if postcode:
-            data['postcode'] = postcode
-        
-        # Extract waste type
-        waste_type = self._get_waste_type(message, context)
-        if waste_type:
-            data['waste_type'] = waste_type
-        
-        # Extract skip size
-        size = self._get_size(message, context)
-        data['size'] = size
-        
-        # Extract customer info
-        name_match = re.search(r'(?:name is|i\'m|call me|name)\s+(\w+)', message, re.IGNORECASE)
-        if name_match:
-            data['firstName'] = name_match.group(1).title()
-        
-        phone_match = re.search(r'\b(07\d{9}|\d{11})\b', message)
-        if phone_match:
-            data['phone'] = phone_match.group(1)
-        
-        email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
-        if email_match:
-            data['emailAddress'] = email_match.group()
-        
-        # Generate booking reference if this is a booking request
-        if self._is_booking_request(message):
-            import uuid
-            data['booking_ref'] = str(uuid.uuid4())
-        
-        data['service'] = 'skip'
-        data['type'] = size  # Use size as type for API
-        
-        return data
-    
-    def _get_postcode(self, message: str, context: Dict) -> str:
-        """Extract postcode with context priority"""
-        # Check context first
-        if context and context.get('postcode'):
-            return context['postcode']
-        
-        # Extract from message
-        patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b',
-            r'postcode\s*:?\s*([A-Z0-9\s]+)'
+        postcode_patterns = [
+            r'\bat\s+([A-Z0-9]{4,8})',  # "at LS14ED"
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # LS14ED
         ]
-        for pattern in patterns:
+        for pattern in postcode_patterns:
             matches = re.findall(pattern, message.upper())
             for match in matches:
                 clean = match.strip().replace(' ', '')
-                if len(clean) >= 4 and any(c.isdigit() for c in clean) and any(c.isalpha() for c in clean):
-                    return clean
+                if len(clean) >= 5:
+                    data['postcode'] = clean
+                    break
         
-        return None
-    
-    def _get_waste_type(self, message: str, context: Dict) -> str:
-        """Extract waste type with context priority"""
-        # Check context first
-        if context and context.get('waste_type'):
-            return context['waste_type']
-        
-        # Extract from message
-        waste_types = [
-            'construction', 'building', 'garden', 'household', 'mixed', 
-            'bricks', 'concrete', 'soil', 'rubble', 'mortar', 'wood',
-            'metal', 'plastic', 'cardboard', 'general', 'office',
-            'demolition', 'renovation', 'clearance'
+        # Extract name - BETTER PATTERNS
+        name_patterns = [
+            r'\bfor\s+(\w+)',  # "for Kanchan"
+            r'\bname\s+(\w+)',  # "name Kanchan"  
+            r'\bi\'?m\s+(\w+)'  # "I'm John"
         ]
-        found = []
-        message_lower = message.lower()
-        for waste in waste_types:
-            if waste in message_lower:
-                found.append(waste)
-        
-        return ', '.join(found) if found else None
-    
-    def _get_size(self, message: str, context: Dict) -> str:
-        """Extract skip size with context priority"""
-        # Check context first
-        if context and context.get('size'):
-            return context['size']
-        
-        # Extract from message
-        size_patterns = [r'(\d+)\s*(?:yard|yd)', r'(\d+)yd', r'eight\s*yard', r'six\s*yard']
-        for pattern in size_patterns:
-            match = re.search(pattern, message.lower())
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
             if match:
-                if 'eight' in pattern:
-                    return "8yd"
-                elif 'six' in pattern:
-                    return "6yd"
-                else:
-                    return f"{match.group(1)}yd"
+                data['firstName'] = match.group(1).title()
+                break
         
-        return "8yd"  # Default size
+        # Extract phone - BETTER PATTERNS
+        phone_patterns = [
+            r'(?:to|link to|phone|number)\s+(\d{11})',  # "to 07823656762"
+            r'\b(07\d{9})\b',  # Mobile
+            r'\b(\d{11})\b'    # Any 11 digits
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, message)
+            if match:
+                data['phone'] = match.group(1)
+                break
+        
+        # Extract waste type
+        waste_types = ['construction', 'bricks', 'rubble', 'concrete', 'soil', 'garden', 'household', 'mixed']
+        found_waste = []
+        for waste in waste_types:
+            if waste in message.lower():
+                found_waste.append(waste)
+        if found_waste:
+            data['waste_type'] = ', '.join(found_waste)
+        
+        # Extract size
+        if '8yd' in message or 'eight' in message.lower():
+            data['size'] = '8yd'
+        elif '6yd' in message or 'six' in message.lower():
+            data['size'] = '6yd'
+        else:
+            data['size'] = '8yd'  # Default
+        
+        # Always generate booking ref
+        import uuid
+        data['booking_ref'] = str(uuid.uuid4())
+        data['service'] = 'skip'
+        data['type'] = data['size']
+        
+        return data
