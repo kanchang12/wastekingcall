@@ -24,9 +24,9 @@ class SMPAPITool(BaseTool):
             if action == "get_pricing":
                 print(f"🔧 SMP API TOOL: Calling _get_pricing()")
                 result = self._get_pricing(**kwargs)
-            elif action == "create_booking_quote":
-                print(f"🔧 SMP API TOOL: Calling _create_booking_quote()")
-                result = self._create_booking_quote(**kwargs)
+            elif action == "create_booking_quote1":
+                print(f"🔧 SMP API TOOL: Calling _create_booking_quote1()")
+                result = self._create_booking_quote1(**kwargs)
             elif action == "take_payment":
                 print(f"🔧 SMP API TOOL: Calling _take_payment()")
                 result = self._take_payment(**kwargs)
@@ -114,7 +114,7 @@ class SMPAPITool(BaseTool):
         
         return {"success": False, "message": "No pricing available"}
     
-    def _create_booking_quote(self, **kwargs) -> Dict[str, Any]:
+    def _create_booking_quote1(self, **kwargs) -> Dict[str, Any]:
         
         print(f"📋 CREATE_BOOKING_QUOTE:")
         print(f"   👤 Name: {kwargs.get('firstName')}")
