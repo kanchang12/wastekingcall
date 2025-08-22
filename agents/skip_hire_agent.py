@@ -25,49 +25,52 @@ PERSONALITY - CRITICAL:
 - Be chatty: "How's your day going?", "Lovely to hear from you!"
 - Sound human and warm, not robotic
 
+PRICING AVAILABLE 24/7 - CRITICAL:
+- NEVER check office hours for pricing - pricing is always available
+- NEVER refuse pricing due to time of day
+- Office hours only apply to physical bookings/deliveries
+- ALWAYS provide pricing when you have the information
+
 BUSINESS RULES - FOLLOW EXACTLY:
-1. ALWAYS collect NAME, POSTCODE, WASTE TYPE before pricing
-2. For heavy materials (soil, rubble, concrete, bricks): MAX 8-yard skip
+1. Pricing requires: POSTCODE + WASTE TYPE + SIZE (name not required for pricing)
+2. For heavy materials (soil, rubble, concrete, bricks, construction): MAX 8-yard skip
 3. 12-yard skips ONLY for light materials (household, garden, furniture)
-4. Sunday deliveries have surcharge
-5. Check the time and never transfer during out of office hours
+4. Office hours only affect booking scheduling, NOT pricing
 
-QUALIFICATION PROCESS - SMART WORKFLOW:
-1. FIRST: Check what info customer has already provided
-2. If customer provides postcode + waste type + size: GET PRICING IMMEDIATELY (even without name)
-3. If missing critical info: Ask for it quickly, then get pricing
-4. Name can be collected during booking, not required for pricing
+IMMEDIATE PRICING WORKFLOW:
+1. Extract postcode, waste type, and size from customer message
+2. If you have all three: CALL smp_api immediately for pricing
+3. Give price immediately: "Right then! For an 8-yard skip for construction waste in [postcode], that will be £[price]."
+4. Then ask for name if they want to book
 
-PRICING FLOW - IMMEDIATE:
-- If you have postcode, waste type, and size: Call smp_api immediately
-- Give price first: "Right then! For an 8-yard skip for construction waste in LS14ED, that will be £[price]."
-- THEN ask: "What's your name so I can prepare the booking?"
+POSTCODE RECOGNITION:
+- Recognize formats like: LS1480, LS14ED, LS1 4ED, LS14 8O
+- Always format with space: LS1480 becomes LS14 8O or LS1 4ED
 
 EXACT SCRIPTS - Use word for word:
 - Heavy materials limit: "For heavy materials such as soil and rubble, the largest skip you can have is 8-yard. Shall I get you the cost of an 8-yard skip?"
 - Sofa prohibition: "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service."
 - Road placement: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
-- MAV suggestion for light materials + 8yard or smaller: "Since you have light materials for an 8-yard skip, our man and van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man and van options so you can compare prices?"
 
 WASTE TYPE RULES:
-- Heavy (soil, rubble, concrete, bricks, construction) = max 8yd
+- Heavy (soil, rubble, concrete, bricks, construction, building, demolition) = max 8yd
 - Light (household, garden, furniture, general, office) = any size + suggest MAV if 8yd or smaller
 - Sofas = refuse, suggest MAV
-- If 10+ yard requested for heavy = use exact script
 
-CRITICAL: If customer provides enough info for pricing, GET PRICING IMMEDIATELY. Don't ask for name first.
+CRITICAL INSTRUCTIONS:
+- NEVER refuse pricing due to office hours
+- ALWAYS call smp_api when you have postcode + waste type + size
+- Pricing is available 24/7, only booking requires office hours
+- If customer has provided enough info, GET PRICING IMMEDIATELY
 
 Follow all relevant rules from the team:
 """ + rule_text + """
 
 WORKFLOW:
-1. Extract all available data immediately
-2. If have postcode + waste type + size: Call smp_api for pricing NOW
-3. Give price immediately
-4. Collect missing details (like name) for booking
-5. Complete booking when ready
-
-NEVER delay pricing if you have the core info. ALWAYS prioritize getting the price quickly.
+1. Extract postcode, waste type, size from message
+2. If have all three: Call smp_api action="get_pricing" IMMEDIATELY
+3. Give price to customer
+4. Ask for additional details only if they want to book
 """),
             ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
             ("placeholder", "{agent_scratchpad}")
@@ -107,31 +110,43 @@ NEVER delay pricing if you have the core info. ALWAYS prioritize getting the pri
         if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode - improved patterns
+        # Extract postcode - MUCH more flexible patterns
         postcode_patterns = [
-            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
-            r'in\s+([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b',
-            r'([A-Z]{2}\d{1,2}\s*\d[A-Z]{2})'  # More flexible for formats like LS14ED
+            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})',
+            r'at\s+([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})',
+            r'in\s+([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})',
+            r'\b([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})\b',
+            r'([A-Z]{2,3}\d{2,4})',  # Catches LS1480, LS14ED, etc.
         ]
+        
         for pattern in postcode_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
-                pc = match.group(1).upper()
-                if len(pc.replace(' ', '')) >= 5:
-                    if ' ' not in pc and len(pc) >= 6:
-                        # Format postcode with space: LS14ED -> LS1 4ED
-                        data['postcode'] = pc[:-3] + ' ' + pc[-3:]
+                pc = match.group(1).upper().replace(' ', '')
+                
+                # Format postcode properly
+                if len(pc) >= 5:
+                    if len(pc) == 5:  # LS14E -> LS1 4E (but this isn't common)
+                        data['postcode'] = pc[:3] + ' ' + pc[3:]
+                    elif len(pc) == 6:  # LS1480 -> LS14 8O or LS1 4ED
+                        # Try different formatting
+                        if pc[:2].isalpha() and pc[2:4].isdigit():
+                            data['postcode'] = pc[:4] + ' ' + pc[4:]  # LS14 80
+                        else:
+                            data['postcode'] = pc[:3] + ' ' + pc[3:]  # LS1 480
+                    elif len(pc) == 7:  # LS14EDx -> LS1 4EDx
+                        data['postcode'] = pc[:3] + ' ' + pc[3:]
                     else:
                         data['postcode'] = pc
                     break
+                    
         if 'postcode' not in data:
             missing.append('postcode')
         
         # Extract waste type - expanded patterns
         waste_indicators = {
-            'heavy': ['soil', 'rubble', 'concrete', 'bricks', 'stone', 'hardcore', 'building', 'construction', 'demolition'],
-            'light': ['household', 'general', 'office', 'party', 'garden', 'furniture', 'wood', 'cardboard', 'rubbish'],
+            'heavy': ['soil', 'rubble', 'concrete', 'bricks', 'stone', 'hardcore', 'building', 'construction', 'demolition', 'builder', 'site'],
+            'light': ['household', 'general', 'office', 'party', 'garden', 'furniture', 'wood', 'cardboard', 'rubbish', 'domestic'],
             'prohibited': ['sofa', 'sofas', 'mattress', 'upholstered']
         }
         
@@ -154,9 +169,9 @@ NEVER delay pricing if you have the core info. ALWAYS prioritize getting the pri
         
         # Extract skip size - improved patterns
         size_patterns = [
-            r'(\d+)\s*(?:yard|yd|y)',
-            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:yard|yd|y)',
-            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:yard|yd|y)?\s*skip'
+            r'(\d+)\s*(?:-?\s*)?(?:yard|yd|y)(?:\s+skip)?',
+            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:-?\s*)?(?:yard|yd|y)(?:\s+skip)?',
+            r'an?\s+(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:-?\s*)?(?:yard|yd|y)?(?:\s+skip)?'
         ]
         size_map = {
             'four': '4', '4': '4', 'six': '6', '6': '6', 'eight': '8', '8': '8',
@@ -214,7 +229,7 @@ NEVER delay pricing if you have the core info. ALWAYS prioritize getting the pri
         data['missing_info'] = missing
         data['service'] = 'skip'
         
-        # Check if we have enough for pricing
+        # Check if we have enough for pricing (name NOT required for pricing)
         has_core_info = 'postcode' in data and 'waste_type' in data and 'type' in data
         data['ready_for_pricing'] = has_core_info
         
@@ -225,7 +240,7 @@ NEVER delay pricing if you have the core info. ALWAYS prioritize getting the pri
         
         # Create extracted info summary for the prompt
         extracted_info = f"""
-Name: {extracted.get('firstName', 'NOT PROVIDED')}
+Name: {extracted.get('firstName', 'NOT PROVIDED (not required for pricing)')}
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Waste Type: {extracted.get('waste_type', 'NOT PROVIDED')}
 Waste Category: {extracted.get('waste_category', 'unknown')}
@@ -234,8 +249,9 @@ Placement: {extracted.get('placement', 'not specified')}
 Requested Day: {extracted.get('requested_day', 'not specified')}
 Phone: {extracted.get('phone', 'NOT PROVIDED')}
 Email: {extracted.get('emailAddress', 'NOT PROVIDED')}
-Missing Info: {extracted.get('missing_info', [])}
+Missing Info for Pricing: {[item for item in extracted.get('missing_info', []) if item != 'name']}
 Ready for Pricing: {extracted.get('ready_for_pricing', False)}
+IMPORTANT: Pricing is available 24/7 - do not check office hours for pricing!
 """
         
         agent_input = {
