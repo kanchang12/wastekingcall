@@ -19,14 +19,18 @@ class SkipHireAgent:
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the WasteKing Skip Hire specialist - friendly, British, and GET PRICING NOW!
 
-IMMEDIATE ACTION REQUIRED:
-- If you have postcode + waste type + size: CALL smp_api IMMEDIATELY
-- Use service="skip-hire" (NOT "skip")
-- Use postcode without spaces (LS14ED not LS14 ED)
-- NEVER ask questions if you have enough info for pricing
+CRITICAL API PARAMETERS - USE EXACTLY:
+- service: "skip-hire" (NOT "skip")
+- type: "8yd" or "6yd" or "4yd" or "12yd" 
+- postcode: "LS14ED" (no spaces)
 
 MANDATORY API CALL FORMAT:
 smp_api(action="get_pricing", postcode="LS14ED", service="skip-hire", type="8yd")
+
+IMMEDIATE ACTION:
+- If you have postcode + waste type + size: CALL smp_api IMMEDIATELY
+- Use service="skip-hire" ALWAYS
+- NEVER ask questions if you have enough info for pricing
 
 STEP-BY-STEP PROCESS:
 1. Extract postcode, waste type, size from message
@@ -95,7 +99,7 @@ INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service=
         if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode - KEEP ORIGINAL FORMAT WITHOUT SPACES
+        # Extract postcode - KEEP WITHOUT SPACES for WasteKing API
         postcode_found = False
         postcode_patterns = [
             r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
@@ -109,7 +113,7 @@ INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service=
             for match in matches:
                 clean_match = match.strip().replace(' ', '')
                 if len(clean_match) >= 4 and any(c.isdigit() for c in clean_match) and any(c.isalpha() for c in clean_match):
-                    data['postcode'] = clean_match  # Keep without spaces: LS14ED
+                    data['postcode'] = clean_match  # LS14ED (no spaces)
                     postcode_found = True
                     break
             if postcode_found:
@@ -132,7 +136,7 @@ INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service=
             'garden': 'light',
             'furniture': 'light',
             'office': 'light',
-            'waste': 'general'  # Generic fallback
+            'waste': 'general'
         }
         
         message_lower = message.lower()
@@ -151,14 +155,16 @@ INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service=
         else:
             missing.append('waste_type')
         
-        # Extract size
+        # Extract size - WasteKing format: "8yd", "6yd", "4yd", "12yd"
         size_patterns = [
             r'(\d+)\s*(?:yard|yd|y)',
             r'(four|six|eight|ten|twelve|fourteen)',
             r'an?\s+(4|6|8|10|12|14)',
         ]
         
-        size_map = {'four': '4', 'six': '6', 'eight': '8', 'ten': '10', 'twelve': '12', 'fourteen': '14'}
+        size_map = {
+            'four': '4', 'six': '6', 'eight': '8', 'ten': '10', 'twelve': '12', 'fourteen': '14'
+        }
         
         size_found = False
         for pattern in size_patterns:
@@ -166,14 +172,14 @@ INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service=
             if match:
                 size_word = match.group(1)
                 size_num = size_map.get(size_word, size_word)
-                data['type'] = f"{size_num}yd"
+                data['type'] = f"{size_num}yd"  # Format: "8yd"
                 size_found = True
                 break
         
         if not size_found:
             # Default based on waste type
             if waste_category == 'heavy':
-                data['type'] = '8yd'  # Max for heavy
+                data['type'] = '8yd'  # Max for heavy materials
             else:
                 data['type'] = '8yd'  # Default
         
@@ -204,8 +210,8 @@ INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service=
         if email_match:
             data['emailAddress'] = email_match.group()
         
-        # CRITICAL SETTINGS
-        data['service'] = 'skip-hire'  # CORRECT SERVICE NAME
+        # CRITICAL SETTINGS FOR WASTEKING API
+        data['service'] = 'skip-hire'  # EXACT value WasteKing expects
         data['missing_info'] = missing
         
         # Check if ready for pricing (name NOT required)
@@ -222,18 +228,22 @@ INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service=
         
         # Create extracted info summary
         extracted_info = f"""
-Postcode: {extracted.get('postcode', 'NOT PROVIDED')} (NO SPACES FORMAT)
+Postcode: {extracted.get('postcode', 'NOT PROVIDED')} (NO SPACES for WasteKing)
 Waste Type: {extracted.get('waste_type', 'NOT PROVIDED')}
 Waste Category: {extracted.get('waste_category', 'unknown')}
-Skip Size: {extracted.get('type', '8yd')}
-Service: skip-hire
+Skip Size: {extracted.get('type', '8yd')} (WasteKing format)
+Service: skip-hire (EXACT WasteKing value)
 Placement: {extracted.get('placement', 'not specified')}
 Requested Day: {extracted.get('requested_day', 'not specified')}
 Ready for Pricing: {extracted.get('ready_for_pricing', False)}
 Missing for Pricing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'waste_type']]}
 
-*** IF Ready for Pricing = True, CALL smp_api WITH service="skip-hire" IMMEDIATELY ***
-*** USE POSTCODE WITHOUT SPACES: {extracted.get('postcode', 'NOT PROVIDED')} ***
+*** WasteKing API Parameters ***
+postcode: {extracted.get('postcode', 'NOT PROVIDED')}
+service: skip-hire
+type: {extracted.get('type', '8yd')}
+
+*** IF Ready for Pricing = True, CALL smp_api WITH THESE EXACT PARAMETERS ***
 """
         
         agent_input = {
