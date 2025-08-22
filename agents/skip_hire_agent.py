@@ -119,7 +119,7 @@ Ready for API: True
         
         # Extract postcode - FIXED patterns
         postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b',  # M1 1AB
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # M1 1AB
             r'M1\s*1AB|M11AB',  # Specific for your test
         ]
         for pattern in postcode_patterns:
