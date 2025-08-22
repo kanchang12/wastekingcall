@@ -12,13 +12,17 @@ class SkipHireAgent:
         self.llm = llm
         self.tools = tools
         
-        # Load rules from PDF properly
+        # Load rules from PDF properly - CORRECT PATH
         try:
-            self.rules_processor = RulesProcessor()
+            # PDF path: data/rules/all rules.pdf (data and agents are same level)
+            pdf_path = os.path.join(os.path.dirname(__file__), "..", "data", "rules", "all rules.pdf")
+            print(f"Loading Skip Hire rules from: {pdf_path}")
+            self.rules_processor = RulesProcessor(pdf_path=pdf_path)
             # Get rules specifically for skip_hire
             skip_rules = self.rules_processor.get_rules_for_agent("skip_hire")
             rule_text = json.dumps(skip_rules, indent=2)
             rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+            print(f"Loaded Skip Hire rules: {len(rule_text)} characters")
         except Exception as e:
             print(f"Warning: Could not load rules from PDF: {e}")
             # Fallback rules if PDF loading fails
@@ -59,7 +63,7 @@ PERSONALITY:
 
 WORKFLOW:
 1. Check extracted data
-2. If Ready for Pricing = True: CALL smp_api immediately
+2. If Ready for Pricing = True: CALL smp_api immediately with service="skip"
 3. If Ready for Pricing = False: ASK for missing info
 
 NO EXAMPLES IN PROMPTS - USE ONLY REAL USER DATA!
@@ -87,15 +91,15 @@ CRITICAL: Only call smp_api if Ready for Pricing = True with REAL user data!
         )
     
     def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
-        """Extract customer data for skip hire"""
+        """Extract customer data for skip hire - NO HARDCODED DATA"""
         data = {}
         missing = []
         
-        # Extract postcode - FORCE NO SPACES
+        # Extract postcode - FORCE NO SPACES, NO HARDCODED FALLBACKS
         postcode_found = False
         postcode_patterns = [
-            r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
             r'postcode\s*:?\s*([A-Z0-9\s]+)',
+            r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
             r'at\s+([A-Z0-9\s]{4,8})',
             r'in\s+([A-Z0-9\s]{4,8})',
         ]
@@ -115,6 +119,7 @@ CRITICAL: Only call smp_api if Ready for Pricing = True with REAL user data!
         
         if not postcode_found:
             missing.append('postcode')
+            print("❌ NO POSTCODE FOUND in message")
         
         # Extract waste type and items
         waste_types = [
@@ -133,7 +138,7 @@ CRITICAL: Only call smp_api if Ready for Pricing = True with REAL user data!
         specific_items = [
             'bags', 'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress',
             'brick', 'bricks', 'concrete', 'soil', 'tiles', 'plaster', 'wood',
-            'metal', 'plastic', 'cardboard', 'books', 'clothes'
+            'metal', 'plastic', 'cardboard', 'books', 'clothes', 'mortar'
         ]
         
         found_items = []
@@ -144,8 +149,10 @@ CRITICAL: Only call smp_api if Ready for Pricing = True with REAL user data!
         if found_waste_types or found_items:
             all_waste = found_waste_types + found_items
             data['waste_type'] = ', '.join(set(all_waste))  # Remove duplicates
+            print(f"🔧 WASTE TYPE EXTRACTED: {data['waste_type']}")
         else:
             missing.append('waste_type')
+            print("❌ NO WASTE TYPE FOUND in message")
         
         # Estimate skip size based on waste description
         size_score = 0
@@ -228,10 +235,13 @@ CRITICAL: Only call smp_api if Ready for Pricing = True with REAL user data!
         data['service'] = 'skip'  # NEVER "skip-hire"!
         data['missing_info'] = missing
         
-        # Ready for pricing check
+        # Ready for pricing check - ONLY with real data
         has_postcode = 'postcode' in data
         has_waste_type = 'waste_type' in data
         data['ready_for_pricing'] = has_postcode and has_waste_type
+        
+        print(f"🔧 READY FOR PRICING: {data['ready_for_pricing']}")
+        print(f"🔧 MISSING INFO: {missing}")
         
         return data
     
@@ -241,12 +251,12 @@ CRITICAL: Only call smp_api if Ready for Pricing = True with REAL user data!
         extracted_info = f"""
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Waste Type: {extracted.get('waste_type', 'NOT PROVIDED')}
-Estimated Skip Size: {extracted.get('type', '8yd')}
+Estimated Skip Size: {extracted.get('type', 'N/A')}
 Service: skip (NEVER skip-hire!)
 Ready for Pricing: {extracted.get('ready_for_pricing', False)}
 Missing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'waste_type']]}
 
-*** CRITICAL: Use service="skip" with postcode="{extracted.get('postcode', 'MISSING')}" ***
+*** ONLY call API if Ready for Pricing = True with REAL data ***
 """
         
         agent_input = {
