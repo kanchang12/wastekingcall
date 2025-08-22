@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 # GLOBAL STATE STORAGE - survives instance recreation
-_GLOBAL_CONVERSATION_STATES = {}
+#_GLOBAL_CONVERSATION_STATES = {}
 
 class AgentOrchestrator:
     """Orchestrates customer interactions between specialized agents with persistent state"""
