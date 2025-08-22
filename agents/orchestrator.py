@@ -1,10 +1,13 @@
-# agents/orchestrator.py - FIXED STATE MANAGEMENT VERSION
-# FIXES: Proper state persistence, context extraction, conversation memory
+# agents/orchestrator.py - COMPLETE FIXED VERSION WITH GLOBAL STATE
+# FIXES: Global state storage, better regex, complete state persistence
 
 import re
 import json
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+
+# GLOBAL STATE STORAGE - survives instance recreation
+_GLOBAL_CONVERSATION_STATES = {}
 
 class AgentOrchestrator:
     """Orchestrates customer interactions between specialized agents with persistent state"""
@@ -12,11 +15,14 @@ class AgentOrchestrator:
     def __init__(self, llm, agents: Dict[str, Any], storage_backend=None):
         self.llm = llm
         self.agents = agents
-        self.storage = storage_backend or {}  # Can be Redis, database, etc.
-        self.conversation_states = {}  # In-memory cache
+        self.storage = storage_backend or {}
+        # Use GLOBAL state to survive instance recreation
+        global _GLOBAL_CONVERSATION_STATES
+        self.conversation_states = _GLOBAL_CONVERSATION_STATES
         
-        print("✅ AgentOrchestrator initialized with state management")
+        print("✅ AgentOrchestrator initialized with GLOBAL state management")
         print(f"✅ Available agents: {list(agents.keys())}")
+        print(f"✅ Existing conversations: {len(self.conversation_states)}")
         print("🎯 ROUTING LOGIC: Grab handles ALL except mav and skip")
     
     def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
@@ -88,10 +94,22 @@ class AgentOrchestrator:
     def _load_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
         """Load conversation state from storage"""
         
-        # Try in-memory cache first
+        # Try GLOBAL state first (survives instance recreation)
+        global _GLOBAL_CONVERSATION_STATES
+        if conversation_id in _GLOBAL_CONVERSATION_STATES:
+            print(f"📁 Loaded state from GLOBAL storage for {conversation_id}")
+            state = _GLOBAL_CONVERSATION_STATES[conversation_id].copy()
+            # Sync to instance cache
+            self.conversation_states[conversation_id] = state.copy()
+            return state
+        
+        # Try in-memory cache
         if conversation_id in self.conversation_states:
             print(f"📁 Loaded state from memory for {conversation_id}")
-            return self.conversation_states[conversation_id].copy()
+            state = self.conversation_states[conversation_id].copy()
+            # Sync to global cache
+            _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
+            return state
         
         # Try persistent storage
         if hasattr(self.storage, 'get'):
@@ -100,7 +118,9 @@ class AgentOrchestrator:
                 if isinstance(stored_state, str):
                     stored_state = json.loads(stored_state)
                 print(f"📁 Loaded state from storage for {conversation_id}")
+                # Sync to both caches
                 self.conversation_states[conversation_id] = stored_state
+                _GLOBAL_CONVERSATION_STATES[conversation_id] = stored_state.copy()
                 return stored_state.copy()
         
         # Return empty state
@@ -120,11 +140,19 @@ class AgentOrchestrator:
         message_lower = message.lower()
         extracted = state.get('extracted_info', {})
         
-        # Extract postcode
-        postcode_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b', message.upper())
-        if postcode_match:
-            extracted['postcode'] = postcode_match.group(1).replace(' ', '')
-            print(f"✅ FOUND POSTCODE: {extracted['postcode']}")
+        # Extract postcode - BETTER REGEX for LS1480 format
+        postcode_patterns = [
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b',  # Standard format
+            r'\b(LS\d{4})\b',  # LS1480 format
+            r'\b([A-Z]{1,2}\d{1,4})\b'  # Partial postcodes
+        ]
+        
+        for pattern in postcode_patterns:
+            postcode_match = re.search(pattern, message.upper())
+            if postcode_match:
+                extracted['postcode'] = postcode_match.group(1).replace(' ', '')
+                print(f"✅ FOUND POSTCODE: {extracted['postcode']}")
+                break
         
         # Extract phone number
         phone_patterns = [
@@ -140,11 +168,26 @@ class AgentOrchestrator:
                 print(f"✅ FOUND PHONE: {extracted['phone']}")
                 break
         
+        # Extract name
+        name_patterns = [
+            r'\bname\s+(\w+)\b',
+            r'\bname\s+is\s+(\w+)\b',
+            r'\bcustomer\s+(\w+)\b',
+            r'\bName\s+([A-Z][a-z]+)\b'
+        ]
+        
+        for pattern in name_patterns:
+            name_match = re.search(pattern, message)
+            if name_match:
+                extracted['name'] = name_match.group(1)
+                print(f"✅ FOUND NAME: {extracted['name']}")
+                break
+        
         # Extract waste types
         waste_keywords = [
             'brick', 'bricks', 'rubble', 'concrete', 'soil', 'muck', 'sand', 'gravel',
             'furniture', 'sofa', 'construction', 'building', 'demolition', 'garden',
-            'household', 'general', 'mixed', 'renovation', 'clearance'
+            'household', 'general', 'mixed', 'renovation', 'clearance', 'bags', 'books'
         ]
         
         found_waste = []
@@ -210,6 +253,8 @@ class AgentOrchestrator:
             state['postcode'] = extracted['postcode']
         if 'phone' in extracted:
             state['phone'] = extracted['phone']
+        if 'name' in extracted:
+            state['name'] = extracted['name']
         if 'waste_type' in extracted:
             state['waste_type'] = extracted['waste_type']
         if 'size' in extracted:
@@ -239,8 +284,12 @@ class AgentOrchestrator:
         
         state['last_updated'] = datetime.now().isoformat()
         
-        # Save to in-memory cache
+        # Save to BOTH in-memory cache AND global state
+        global _GLOBAL_CONVERSATION_STATES
         self.conversation_states[conversation_id] = state.copy()
+        _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
+        
+        print(f"💾 Saved state for {conversation_id} (total: {len(_GLOBAL_CONVERSATION_STATES)})")
         
         # Save to persistent storage if available
         if hasattr(self.storage, 'set'):
@@ -386,8 +435,13 @@ class AgentOrchestrator:
     def clear_conversation_state(self, conversation_id: str) -> bool:
         """Clear conversation state"""
         try:
+            global _GLOBAL_CONVERSATION_STATES
+            
             if conversation_id in self.conversation_states:
                 del self.conversation_states[conversation_id]
+            
+            if conversation_id in _GLOBAL_CONVERSATION_STATES:
+                del _GLOBAL_CONVERSATION_STATES[conversation_id]
             
             if hasattr(self.storage, 'delete'):
                 self.storage.delete(f"conv_state_{conversation_id}")
@@ -403,7 +457,9 @@ class AgentOrchestrator:
         agent_usage = {}
         total_messages = 0
         
-        for state in self.conversation_states.values():
+        global _GLOBAL_CONVERSATION_STATES
+        
+        for state in _GLOBAL_CONVERSATION_STATES.values():
             for entry in state.get('messages', []):
                 agent = entry.get('agent_used', 'unknown')
                 agent_usage[agent] = agent_usage.get(agent, 0) + 1
@@ -412,5 +468,5 @@ class AgentOrchestrator:
         return {
             "total_messages_processed": total_messages,
             "agent_usage": agent_usage,
-            "active_conversations": len(self.conversation_states)
+            "active_conversations": len(_GLOBAL_CONVERSATION_STATES)
         }
