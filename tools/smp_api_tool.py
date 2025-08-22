@@ -19,8 +19,9 @@ class SMPAPITool(BaseTool):
     - take_payment: call_sid, customer_phone, quote_id, amount
     - call_supplier: supplier_phone, supplier_name, booking_ref, message
     """
-    base_url: str = Field(default=os.getenv('WASTEKING_BASE_URL', "https://wk-smp-api-dev.azurewebsites.net/"))
-    access_token: str = Field(default=os.getenv('WASTEKING_ACCESS_TOKEN', 'fallback_token'))
+    base_url: str = Field(default="")  # Not needed anymore
+    access_token: str = Field(default="")  # Not needed anymore
+    koyeb_url: str = Field(default="https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app")
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         try:
@@ -56,96 +57,31 @@ class SMPAPITool(BaseTool):
         else:
             self._log_with_timestamp(f"ERROR: {message}", "ERROR")
 
-    def _create_wasteking_booking(self):
-        """Create booking reference - STEP 1"""
+    def _send_koyeb_webhook(self, url, data_payload):
+        """Send actual data to Koyeb endpoint"""
         try:
-            headers = {
-                "x-wasteking-request": self.access_token,
-                "Content-Type": "application/json"
-            }
+            headers = {"Content-Type": "application/json"}
             
-            create_url = f"{self.base_url}api/booking/create"
+            self._log_with_timestamp(f"🔄 Sending to Koyeb: {json.dumps(data_payload, indent=2)}")
             
-            response = requests.post(
-                create_url,
-                headers=headers,
-                json={"type": "chatbot", "source": "wasteking.co.uk"},
-                timeout=15,
-                verify=False
-            )
+            response = requests.post(url, headers=headers, json=data_payload, timeout=30)
             
-            if response.status_code == 200:
-                response_json = response.json()
-                booking_ref = response_json.get('bookingRef')
-                if booking_ref:
-                    self._log_with_timestamp(f"✅ Created booking: {booking_ref}")
-                    time.sleep(1)
-                    return booking_ref
+            self._log_with_timestamp(f"🔄 Koyeb response status: {response.status_code}")
+            self._log_with_timestamp(f"🔄 Koyeb response text: {response.text}")
             
-            self._log_with_timestamp(f"❌ Failed to create booking: {response.status_code}")
-            return None
-                
-        except Exception as e:
-            self._log_error("Failed to create booking", e)
-            return None
-
-    def _update_wasteking_booking(self, booking_ref, postcode, service, type_):
-        """Construct JSON with Python variables and send to Koyeb endpoint"""
-        try:
-            url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/wasteking-confirm-booking"
-            headers = {
-                "Content-Type": "application/json"
-            }
-    
-            payload = {
-                "type": "webhook",
-                "name": "create_booking_quote",
-                "description": "Create WasteKing booking quote with payment link, apply discounts and surcharges for extra items",
-                "disable_interruptions": False,
-                "force_pre_tool_speech": "auto",
-                "assignments": [],
-                "api_schema": {
-                    "url": url,
-                    "method": "POST",
-                    "path_params_schema": [],
-                    "query_params_schema": [],
-                    "request_body_schema": {
-                        "id": "body",
-                        "type": "object",
-                        "description": "Create booking quote with customer details, discounts, and surcharges",
-                        "properties": [
-                            {"id": "type", "type": "string", "required": True, "constant_value": type_},
-                            {"id": "postcode", "type": "string", "required": True, "constant_value": postcode},
-                            {"id": "service", "type": "string", "required": True, "constant_value": service},
-                            {"id": "booking_ref", "type": "string", "required": True, "constant_value": booking_ref}
-                        ]
-                    },
-                    "request_headers": [],
-                    "auth_connection": None
-                },
-                "response_timeout_secs": 30,
-                "dynamic_variables": {"dynamic_variable_placeholders": {}}
-            }
-    
-            self._log_with_timestamp(f"🔄 Sending Koyeb JSON payload: {json.dumps(payload, indent=2)}")
-            response = requests.post(url, headers=headers, json=payload, timeout=20)
-    
-            self._log_with_timestamp(f"🔄 Response status: {response.status_code}")
-            self._log_with_timestamp(f"🔄 Response text: {response.text}")
-    
             if response.status_code in [200, 201]:
                 return response.json()
             else:
-                return {"success": False, "error": f"Failed with status code {response.status_code}"}
-    
+                return {"success": False, "error": f"Koyeb failed with status {response.status_code}"}
+                
         except Exception as e:
-            self._log_error(f"Failed to send Koyeb JSON for booking {booking_ref}", e)
+            self._log_error("Koyeb request failed", e)
             return {"success": False, "error": str(e)}
-
-    def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
-                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing - STEP 1 & 2: Create booking and get price"""
     
+    def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
+                    type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """Get pricing - Send actual data to Koyeb wastekingmarketplace endpoint"""
+        
         # Validate required parameters
         if not postcode:
             return {"success": False, "error": "Missing required parameter: postcode"}
@@ -153,31 +89,44 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: service"}
         if not type:
             return {"success": False, "error": "Missing required parameter: type"}
-    
+            
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
-    
+        
         try:
-            # STEP 1: Create booking
-            booking_ref = self._create_wasteking_booking()
-            if not booking_ref:
-                return {"success": False, "message": "Failed to create booking"}
-    
-            # STEP 2: Send booking data (to Koyeb endpoint or WasteKing)
-            response_data = self._update_wasteking_booking(
-                booking_ref=booking_ref,
-                postcode=postcode,
-                service=service,
-                type_=type
-            )
-            if not response_data:
+            # Create actual data payload (not webhook structure)
+            data_payload = {
+                "type": type,
+                "postcode": postcode,
+                "service": service,
+                "firstName": kwargs.get("firstName", ""),
+                "phone": kwargs.get("phone", ""),
+                "lastName": kwargs.get("lastName", ""),
+                "emailAddress": kwargs.get("emailAddress", ""),
+                "date": kwargs.get("date", ""),
+                "time": kwargs.get("time", ""),
+                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", ""),
+                "call_sid": kwargs.get("call_sid", "")
+            }
+            
+            # Remove empty values
+            data_payload = {k: v for k, v in data_payload.items() if v}
+            
+            # Send to Koyeb endpoint
+            url = f"{self.koyeb_url}/api/wasteking-get-price"
+            response_data = self._send_koyeb_webhook(url, data_payload)
+            
+            if not response_data or not response_data.get("success"):
                 return {"success": False, "message": "No pricing data"}
-    
-            quote_data = response_data.get('quote', {})
-            price = quote_data.get('price', '0')
-            supplier_phone = quote_data.get('supplierPhone', "+447823656907")
-            supplier_name = quote_data.get('supplierName', "Default Supplier")
-    
-            # Return format
+
+            # Extract data from response
+            booking_ref = response_data.get('booking_ref', '')
+            price = response_data.get('price', '0')
+            supplier_phone = response_data.get('real_supplier_phone', "+447823656907")
+            supplier_name = response_data.get('supplier_name', "Default Supplier")
+            
+            # Print real supplier number
+            print(f"📞 Real supplier from API: {supplier_phone}")
+            
             return {
                 "success": True,
                 "booking_ref": booking_ref,
@@ -188,7 +137,7 @@ class SMPAPITool(BaseTool):
                 "service": service,
                 "type": type
             }
-    
+                
         except Exception as e:
             self._log_error("Marketplace request failed", e)
             return {
@@ -197,11 +146,10 @@ class SMPAPITool(BaseTool):
                 "error": str(e)
             }
     
-    
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
-                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Create booking quote - STEP 3: Add customer details"""
-    
+                             postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """Create booking quote - Send actual data to Koyeb create_booking_quote endpoint"""
+        
         # Validate required parameters
         if not type:
             return {"success": False, "error": "Missing required parameter: type"}
@@ -215,26 +163,43 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: phone"}
         if not kwargs.get('booking_ref'):
             return {"success": False, "error": "Missing required parameter: booking_ref"}
-    
+            
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
-    
+        
         try:
-            booking_ref = kwargs.get('booking_ref')
-    
-            # STEP 3: Send booking quote data
-            payment_response = self._update_wasteking_booking(
-                booking_ref=booking_ref,
-                postcode=postcode,
-                service=service,
-                type_=type
-            )
-    
-            if payment_response and payment_response.get('quote', {}).get('paymentLink'):
-                payment_link = payment_response['quote']['paymentLink']
-                final_price = payment_response['quote'].get('price', '0')
-            else:
+            # Create actual data payload (not webhook structure)
+            data_payload = {
+                "type": type,
+                "service": service,
+                "postcode": postcode,
+                "firstName": kwargs.get("firstName", ""),
+                "lastName": kwargs.get("lastName", ""),
+                "phone": kwargs.get("phone", ""),
+                "emailAddress": kwargs.get("emailAddress", ""),
+                "time": kwargs.get("time", ""),
+                "date": kwargs.get("date", ""),
+                "extra_items": kwargs.get("extra_items", ""),
+                "discount_applied": kwargs.get("discount_applied", False),
+                "call_sid": kwargs.get("call_sid", ""),
+                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", ""),
+                "booking_ref": kwargs.get("booking_ref", "")
+            }
+            
+            # Remove empty values
+            data_payload = {k: v for k, v in data_payload.items() if v}
+            
+            # Send to Koyeb endpoint
+            url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
+            response_data = self._send_koyeb_webhook(url, data_payload)
+            
+            if not response_data or not response_data.get("success"):
                 return {"success": False, "message": "No payment link available"}
-    
+
+            # Extract data from response
+            payment_link = response_data.get('payment_link', '')
+            final_price = response_data.get('final_price', '0')
+            booking_ref = response_data.get('booking_ref', kwargs.get('booking_ref'))
+
             return {
                 "success": True,
                 "message": "Booking confirmed",
@@ -243,14 +208,13 @@ class SMPAPITool(BaseTool):
                 "final_price": final_price,
                 "customer_phone": kwargs.get("phone", "")
             }
-    
+                
         except Exception as e:
             return {"success": False, "error": f"Booking quote failed: {str(e)}"}
-
     
-    def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
+        def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Send payment link to customer - EXACTLY like Flask confirm_wasteking_booking"""
+        """Send payment link to customer - Send actual data to Koyeb take_payment endpoint"""
         
         # Validate required parameters
         if not customer_phone:
@@ -261,21 +225,30 @@ class SMPAPITool(BaseTool):
         print(f"💳 Taking payment for quote {quote_id}")
         
         try:
-            # Generate payment link using action: quote - EXACTLY like Flask code
-            payment_payload = {"action": "quote"}
-            payment_response = self._update_wasteking_booking(quote_id, payment_payload)
+            # Create actual data payload (not webhook structure)
+            data_payload = {
+                "call_sid": call_sid or "",
+                "customer_phone": customer_phone,
+                "quote_id": quote_id,
+                "amount": amount or "50",
+                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
+            }
             
-            if payment_response and payment_response.get('quote', {}).get('paymentLink'):
-                payment_link = payment_response['quote']['paymentLink']
-                final_price = payment_response['quote'].get('price', amount or '50')
-            else:
-                # Fallback like Flask code
-                payment_link = "https://www.paypal.com/ncp/payment/BQ82GUU9VSKYN"
-                final_price = amount or '50'
+            # Remove empty values
+            data_payload = {k: v for k, v in data_payload.items() if v}
+            
+            # Send to Koyeb endpoint
+            url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
+            response_data = self._send_koyeb_webhook(url, data_payload)
+            
+            if not response_data or not response_data.get("success"):
+                return {"success": False, "error": "Payment processing failed"}
 
-            # Send SMS using your existing function
-            sms_response = self._send_payment_sms(quote_id, customer_phone, payment_link, str(final_price))
-            
+            # Extract data from response
+            payment_link = response_data.get('payment_link', '')
+            final_price = response_data.get('final_price', amount or '50')
+            sms_sent = response_data.get('sms_sent', False)
+
             return {
                 "success": True,
                 "message": "Payment link sent to customer",
@@ -283,11 +256,12 @@ class SMPAPITool(BaseTool):
                 "payment_link": payment_link,
                 "final_price": final_price,
                 "customer_phone": customer_phone,
-                "sms_sent": sms_response.get('success', False)
+                "sms_sent": sms_sent
             }
                 
         except Exception as e:
             return {"success": False, "error": f"Payment processing failed: {str(e)}"}
+    
 
     def _send_payment_sms(self, booking_ref: str, phone: str, payment_link: str, amount: str):
         """Send payment SMS via Twilio - EXACTLY like Flask code"""
@@ -417,11 +391,13 @@ Thank you!"""
         if not pricing_result.get("success"):
             return pricing_result
         
-        supplier_phone = pricing_result.get("supplier_phone")
+        supplier_phone = pricing_result.get("real_supplier_phone")  # Get real supplier phone
         supplier_name = pricing_result.get("supplier_name")
         
         if not supplier_phone:
             return {"success": False, "error": "No supplier phone number available"}
+        
+        print(f"📞 Using real supplier phone for availability check: {supplier_phone}")
         
         # Call supplier to check availability
         try:
@@ -432,7 +408,7 @@ Thank you!"""
             )
             
             call_result = caller.call_supplier_for_availability(
-                supplier_phone="07823656907",
+                supplier_phone=supplier_phone,  # Use real supplier phone
                 service_type=service,
                 postcode=postcode,
                 date=date or "ASAP"
