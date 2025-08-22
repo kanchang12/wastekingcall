@@ -201,29 +201,44 @@ class SMPAPITool(BaseTool):
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
         try:
-            # Get or create booking ref
+            # Get booking ref from kwargs or create new one
             booking_ref = kwargs.get('booking_ref')
             if not booking_ref:
                 booking_ref = self._create_wasteking_booking()
                 if not booking_ref:
                     return {"success": False, "message": "Failed to create booking"}
 
-            customer_phone = kwargs.get('customer_phone') or kwargs.get('phone')
-            if not customer_phone:
-                return {"success": False, "message": "Phone number required"}
-
-            # Generate payment link - EXACT same as your Flask code
-            payment_payload = {"action": "quote"}
+            # Payment payload structure as shown in screenshot
+            payment_payload = {
+                "bookingRef": booking_ref,
+                "type": type,
+                "service": service,
+                "postcode": postcode,
+                "firstName": kwargs.get("firstName", ""),
+                "phone": kwargs.get("phone", ""),
+                "lastName": kwargs.get("lastName", ""),
+                "emailAddress": kwargs.get("emailAddress", ""),
+                "time": kwargs.get("time", ""),
+                "date": kwargs.get("date", ""),
+                "extra_items": kwargs.get("extra_items", ""),
+                "discount_applied": kwargs.get("discount_applied", False),
+                "call_sid": kwargs.get("call_sid", ""),
+                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
+            }
+            
+            # Remove empty fields
+            payment_payload = {k: v for k, v in payment_payload.items() if v}
+            
+            self._log_with_timestamp(f"📋 Payment payload: {json.dumps(payment_payload, indent=2)}")
+            
+            # Call WasteKing booking update
             payment_response = self._update_wasteking_booking(booking_ref, payment_payload)
             
             if payment_response and payment_response.get('quote', {}).get('paymentLink'):
                 payment_link = payment_response['quote']['paymentLink']
-                base_price = float(payment_response['quote'].get('price', '0'))
+                final_price = payment_response['quote'].get('price', '0')
             else:
                 return {"success": False, "message": "No payment link available"}
-
-            # Calculate final price (simplified)
-            final_price = base_price
 
             return {
                 "success": True,
@@ -231,7 +246,7 @@ class SMPAPITool(BaseTool):
                 "booking_ref": booking_ref,
                 "payment_link": payment_link,
                 "final_price": final_price,
-                "customer_phone": customer_phone
+                "customer_phone": kwargs.get("phone", "")
             }
                 
         except Exception as e:
