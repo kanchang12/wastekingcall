@@ -1,642 +1,191 @@
-import re
-import json
-import os
-from typing import Dict, Any, Optional, List
-from datetime import datetime
+import re 
+from typing import Dict, Any
+from langchain.tools import BaseTool
+from pydantic import Field
 
-# agents/orchestrator.py - COMPLETE FIXED VERSION WITH GLOBAL STATE
-# MINIMAL CHANGES - ONLY ADDED:
-# 1. Better booking confirmation detection
-# 2. Hardcoded supplier call to +447394642517 when customer says yes
-# 3. Console logging
-# 4. Your agents still do all the work
-#
-# ========== COMPLETE BUSINESS FLOW EXPLANATION ==========
-#
-# WHEN CUSTOMER SAYS "YES I WANT TO BOOK":
-# 1. 📞 NOTIFY SUPPLIER +447394642517 via ElevenLabs (fire and forget - don't wait)
-#    - Uses second ElevenLabs agent for supplier calls
-#    - Tells supplier: "New booking in [postcode] for [service]"
-#    - BUSINESS CONTINUES - don't lose money waiting for pickup
-#
-# 2. 📋 CREATE BOOKING IMMEDIATELY via SMP API
-#    - Postcode cleaned: "LS1 4ED" → "LS14ED" (no spaces for API)
-#    - Creates booking reference: WK-[timestamp]
-#    - Calls: smp_tool._run(action="create_booking_quote", postcode="LS14ED", service="grab", firstName="John", phone="07123456789")
-#
-# 3. 📱 SEND PAYMENT SMS via SMP API → Koyeb → Twilio
-#    - Calls: smp_tool._run(action="take_payment", customer_phone="07123456789", quote_id="WK123", amount="85")
-#    - SMP API → Koyeb webhook /api/send-payment-sms → Twilio SMS
-#    - Customer gets: "Pay £85 for booking WK123 - Link: https://pay.wasteking.co.uk/123"
-#
-# 4. 💰 MONEY SECURED - Business complete!
-#    - Only stop if supplier calls back and explicitly says "NO"
-#    - Otherwise assume available and proceed
-#
-# ========== POSTCODE STRUCTURE ==========
-# Input formats accepted: "LS1 4ED", "LS14ED", "M1 1AB", "M11AB"
-# Cleaned for API: Remove spaces, uppercase → "LS14ED", "M11AB"
-# Sent to API: Clean format without spaces
-#
-# ========== RULES FOLLOWED ==========
-# - PDF rules processed by RulesProcessor in each agent
-# - Routing: Only explicit "skip"/"man and van" requests go to those agents
-# - EVERYTHING ELSE → Grab Hire Agent (soil, furniture, general waste, construction)
-# - Man & Van: Automatically rejects heavy items (bricks, concrete, soil)
-# - Grab: Handles all heavy materials (soil, rubble, construction)
-# - Skip: Traditional waste containers only
-# - All agents use conversation context to avoid repeat questions
-#
-# ========== PAYMENT LINK PROCESS ==========
-# SMP API take_payment → Koyeb webhook → Twilio SMS → Customer phone
-# Customer receives clickable payment link in SMS
-# Payment processed through secure WasteKing payment portal
+try:
+    from twilio.rest import Client
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
 
-# GLOBAL STATE STORAGE - survives instance recreation
-_GLOBAL_CONVERSATION_STATES = {}
-
-class AgentOrchestrator:
-    """Orchestrates customer interactions between specialized agents with persistent state"""
+class SMSTool(BaseTool):
+    name: str = "sms"
+    description: str = "Send SMS messages via Twilio"
+    account_sid: str = Field(default="")
+    auth_token: str = Field(default="")
+    phone_number: str = Field(default="")
     
-    def __init__(self, llm, agents: Dict[str, Any], storage_backend=None):
-        self.llm = llm
-        self.agents = agents
-        self.storage = storage_backend or {}
-        # Use GLOBAL state to survive instance recreation
-        global _GLOBAL_CONVERSATION_STATES
-        self.conversation_states = _GLOBAL_CONVERSATION_STATES
+    def _run(self, action: str, **kwargs) -> Dict[str, Any]:
+        print(f"📱 SMS TOOL CALLED:")
+        print(f"   🔧 Action: {action}")
+        print(f"   🔧 Parameters: {kwargs}")
+        print(f"   🔧 Twilio Available: {TWILIO_AVAILABLE}")
+        print(f"   🔧 Account SID Set: {'✅' if self.account_sid else '❌'}")
+        print(f"   🔧 Auth Token Set: {'✅' if self.auth_token else '❌'}")
         
-        print("✅ AgentOrchestrator initialized with GLOBAL state management")
-        print(f"✅ Available agents: {list(agents.keys())}")
-        print(f"✅ Existing conversations: {len(self.conversation_states)}")
-        print("🎯 ROUTING LOGIC: Grab handles ALL except mav and skip")
-    
-    def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
-        """Process customer message and route to appropriate agent with state management"""
-        
-        print(f"\n🎯 ORCHESTRATOR: Processing message for {conversation_id}")
-        print(f"📝 Message: {message}")
-        print(f"📋 Incoming Context: {context}")
+        if not TWILIO_AVAILABLE:
+            return {"success": False, "error": "Twilio not available - install twilio package"}
         
         try:
-            # Load existing conversation state
-            conversation_state = self._load_conversation_state(conversation_id)
+            if action == "send_payment_sms":
+                result = self._send_payment_sms(**kwargs)
+                print(f"📱 PAYMENT SMS RESULT: {result}")
+                return result
+            elif action == "send_booking_confirmation":
+                result = self._send_booking_confirmation(**kwargs)
+                print(f"📱 CONFIRMATION SMS RESULT: {result}")
+                return result
+            else:
+                error_result = {"success": False, "error": f"Unknown SMS action: {action}"}
+                print(f"📱 SMS ERROR: {error_result}")
+                return error_result
+        except Exception as e:
+            print(f"❌ SMS Tool Exception: {str(e)}")
+            return {"success": False, "error": str(e)}
+    
+    def _send_payment_sms(self, phone: str, amount: str, booking_ref: str, payment_link: str) -> Dict[str, Any]:
+        
+        print(f"📱 SENDING PAYMENT SMS:")
+        print(f"   📞 Phone: {phone}")
+        print(f"   💰 Amount: £{amount}")
+        print(f"   📋 Booking Ref: {booking_ref}")
+        print(f"   💳 Payment Link: {payment_link}")
+        
+        # Clean and validate phone number
+        clean_phone = self._clean_phone_number(phone)
+        print(f"📱 PHONE VALIDATION: {clean_phone}")
+        
+        if not clean_phone['valid']:
+            return {"success": False, "error": clean_phone['error']}
+        
+        if not self.account_sid or not self.auth_token:
+            print("⚠️ Twilio credentials not configured - simulating SMS")
+            return {
+                "success": True,
+                "sms_sid": "simulated_sms_123",
+                "phone": clean_phone['phone'],
+                "amount": amount,
+                "simulated": True,
+                "message": f"SMS would be sent to {clean_phone['phone']}: Pay £{amount} for booking {booking_ref}"
+            }
+        
+        try:
+            print(f"📱 CREATING TWILIO CLIENT...")
+            client = Client(self.account_sid, self.auth_token)
             
-            # Extract and update state from current message
-            self._extract_and_update_state(message, conversation_state)
-            
-            # Merge with incoming context
-            if context:
-                conversation_state.update(context)
-            
-            print(f"🔄 Updated Conversation State: {conversation_state}")
-            
-            # *** ONLY NEW ADDITION: CHECK FOR BOOKING CONFIRMATION ***
-            if self._is_booking_confirmation(message, conversation_state):
-                print("🔥 BOOKING CONFIRMATION DETECTED - CALLING +447394642517")
-                self._call_hardcoded_supplier_async(conversation_state)
-                
-                # Return booking confirmation response
-                extracted = conversation_state.get('extracted_info', {})
-                customer_name = extracted.get('name') or conversation_state.get('name', 'Customer')
-                booking_ref = conversation_state.get('booking_ref', f"WK-{int(datetime.now().timestamp())}")
-                
-                booking_response = f"""✅ **Booking Confirmed & Payment Sent!**
+            message_body = f"""🗑️ WasteKing Payment Required
 
-👤 **Customer:** {customer_name}
-📋 **Reference:** {booking_ref}
-📞 **Supplier notified:** ✅ (will call if unavailable)
-📱 **Payment link sent:** ✅ (SMS to {conversation_state.get('phone', 'customer')})
-💰 **Business secured:** ✅ (payment link active)
+💰 Amount: £{amount}
+📋 Reference: {booking_ref}
 
-Collection will be arranged within 24 hours. Thank you for choosing WasteKing!"""
+💳 Pay securely: {payment_link}
 
-                self._save_conversation_state(conversation_id, conversation_state, message, booking_response, 'orchestrator_booking')
-                
-                return {
-                    "success": True,
-                    "response": booking_response,
-                    "agent_used": "orchestrator_booking",
-                    "booking_created": conversation_state.get('booking_created', False),
-                    "supplier_called": conversation_state.get('supplier_called', False),
-                    "payment_sent": conversation_state.get('payment_sent', False),
-                    "conversation_state": conversation_state,
-                    "conversation_id": conversation_id,
-                    "timestamp": datetime.now().isoformat()
-                }
+Thank you for choosing WasteKing!"""
             
-            # Determine which agent should handle this message
-            agent_choice, routing_reason = self._determine_agent(message, conversation_state)
+            print(f"📱 SENDING TWILIO MESSAGE:")
+            print(f"   📞 From: {self.phone_number}")
+            print(f"   📞 To: {clean_phone['phone']}")
+            print(f"   💬 Message: {message_body}")
             
-            print(f"🎯 ROUTING TO: {agent_choice.upper()} agent ({routing_reason})")
+            message = client.messages.create(
+                body=message_body,
+                from_=self.phone_number,
+                to=clean_phone['phone']
+            )
             
-            # Get the appropriate agent
-            agent = self.agents.get(agent_choice)
-            if not agent:
-                print(f"❌ Agent '{agent_choice}' not found, defaulting to grab_hire")
-                agent = self.agents.get('grab_hire')
-                agent_choice = 'grab_hire'
-            
-            # Update service in state
-            conversation_state['last_service'] = agent_choice
-            conversation_state['service'] = agent_choice.replace('_hire', '').replace('_', '')
-            
-            # Process message with the selected agent, passing full state as context
-            print(f"🔧 CALLING {agent_choice.upper()} AGENT")
-            print(f"🔧 AGENT INPUT DATA:")
-            print(f"   📝 Message: {message}")
-            print(f"   📍 Postcode: {conversation_state.get('postcode', 'None')}")
-            print(f"   🗑️ Waste Type: {conversation_state.get('waste_type', 'None')}")
-            print(f"   👤 Name: {conversation_state.get('name', 'None')}")
-            print(f"   📞 Phone: {conversation_state.get('phone', 'None')}")
-            
-            response = agent.process_message(message, conversation_state)
-            
-            print(f"🔧 {agent_choice.upper()} AGENT RESPONSE: {response}")
-            
-            # Check if response contains pricing and update state
-            if '£' in response and any(word in response.lower() for word in ['price', 'cost', 'quote']):
-                conversation_state['has_pricing'] = True
-                print(f"🔧 PRICING DETECTED IN RESPONSE")
-            
-            # Save updated conversation state
-            self._save_conversation_state(conversation_id, conversation_state, message, response, agent_choice)
+            print(f"✅ Payment SMS sent successfully")
+            print(f"   📱 SMS SID: {message.sid}")
             
             return {
                 "success": True,
-                "response": response,
-                "agent_used": agent_choice,
-                "routing": {
-                    "agent": agent_choice,
-                    "reason": routing_reason,
-                    "message_processed": True
-                },
-                "conversation_state": conversation_state,
-                "conversation_id": conversation_id,
-                "timestamp": datetime.now().isoformat()
+                "sms_sid": message.sid,
+                "phone": clean_phone['phone'],
+                "amount": amount,
+                "booking_ref": booking_ref,
+                "message_sent": True
             }
             
         except Exception as e:
-            print(f"❌ Orchestrator Error: {str(e)}")
+            print(f"❌ Failed to send payment SMS: {e}")
+            return {"success": False, "error": f"SMS sending failed: {str(e)}"}
+    
+    def _send_booking_confirmation(self, phone: str, booking_ref: str, service: str, **kwargs) -> Dict[str, Any]:
+        
+        clean_phone = self._clean_phone_number(phone)
+        if not clean_phone['valid']:
+            return {"success": False, "error": clean_phone['error']}
+        
+        if not self.account_sid or not self.auth_token:
+            print("⚠️ Twilio credentials not configured - simulating SMS")
             return {
-                "success": False,
-                "response": "I'm having a technical issue. What's your postcode and what type of waste do you need collected?",
-                "error": str(e),
-                "agent_used": "fallback",
-                "conversation_id": conversation_id
+                "success": True,
+                "sms_sid": "simulated_confirmation_123",
+                "phone": clean_phone['phone'],
+                "simulated": True,
+                "message": f"Booking confirmation would be sent to {clean_phone['phone']} for {booking_ref}"
             }
-    
-    def _is_booking_confirmation(self, message: str, state: Dict[str, Any]) -> bool:
-        """Check if customer is confirming a booking"""
-        message_lower = message.lower()
-        
-        # Look for confirmation words
-        confirmation_words = ['yes', 'yeah', 'ok', 'okay', 'sure', 'book it', 'go ahead', 'confirm', 'proceed']
-        
-        # Check if we have pricing in recent conversation AND customer details
-        has_recent_pricing = False
-        has_customer_details = False
-        
-        messages = state.get('messages', [])
-        if messages:
-            last_response = messages[-1].get('agent_response', '').lower() if messages else ''
-            if '£' in last_response and any(word in last_response for word in ['price', 'cost', 'quote']):
-                has_recent_pricing = True
-        
-        # Check for customer details
-        extracted = state.get('extracted_info', {})
-        name = extracted.get('name') or state.get('name')
-        phone = extracted.get('phone') or state.get('phone')
-        postcode = extracted.get('postcode') or state.get('postcode')
-        
-        has_customer_details = bool(name and phone and postcode)
-        
-        print(f"🔥 BOOKING CHECK: confirmation={any(word in message_lower for word in confirmation_words)}, pricing={has_recent_pricing}, details={has_customer_details}")
-        
-        return (any(word in message_lower for word in confirmation_words) and 
-                has_recent_pricing and 
-                has_customer_details)
-    
-    def _call_hardcoded_supplier_async(self, state: Dict[str, Any]):
-        """CORRECT BUSINESS FLOW: Call supplier to notify, CREATE BOOKING IMMEDIATELY, don't lose business"""
-        
-        SUPPLIER_PHONE = "+447394642517"  # HARDCODED
         
         try:
-            print(f"🔥 CUSTOMER SAID YES - BUSINESS FLOW: NOTIFY SUPPLIER + CREATE BOOKING")
+            client = Client(self.account_sid, self.auth_token)
             
-            # Get customer details
-            extracted = state.get('extracted_info', {})
-            customer_name = extracted.get('name') or state.get('name')
-            customer_phone = extracted.get('phone') or state.get('phone')
-            postcode = extracted.get('postcode') or state.get('postcode')
-            service = state.get('service', 'grab')
+            postcode = kwargs.get('postcode', '')
+            customer_name = kwargs.get('customer_name', 'Customer')
             
-            print(f"📋 CUSTOMER DETAILS: {customer_name}, {customer_phone}, {postcode}, {service}")
+            message_body = f"""✅ WasteKing Booking Confirmed
+
+👤 Name: {customer_name}
+📋 Reference: {booking_ref}
+🚛 Service: {service.title()}
+📍 Area: {postcode}
+
+We'll contact you to arrange collection.
+Questions? Reply HELP"""
             
-            # STEP 1: Call supplier to NOTIFY (fire and forget - don't wait for response)
-            print(f"📞 STEP 1: NOTIFYING SUPPLIER (FIRE AND FORGET)")
-            supplier_result = self._call_supplier_notification(SUPPLIER_PHONE, postcode, service, customer_name)
-            state['supplier_called'] = supplier_result.get('success', False)
-            
-            # STEP 2: CREATE BOOKING IMMEDIATELY (don't wait for supplier - take the money!)
-            print(f"📋 STEP 2: CREATING BOOKING IMMEDIATELY (DON'T LOSE BUSINESS)")
-            booking_result = self._create_booking_quote(customer_name, customer_phone, postcode, service)
-            state['booking_created'] = booking_result.get('success', False)
-            state['booking_ref'] = booking_result.get('booking_ref', '')
-            
-            if not booking_result.get('success'):
-                print(f"❌ BOOKING CREATION FAILED - TECHNICAL ISSUE")
-                state['payment_sent'] = False
-                return
-            
-            # STEP 3: SEND PAYMENT LINK IMMEDIATELY (booking created, take payment)
-            print(f"📱 STEP 3: SENDING PAYMENT LINK (TAKE THE MONEY)")
-            payment_result = self._send_payment_sms(customer_phone, booking_result.get('booking_ref'), booking_result.get('final_price'))
-            state['payment_sent'] = payment_result.get('success', False)
-            
-            print(f"🔥 BUSINESS FLOW COMPLETE:")
-            print(f"   📞 Supplier Notified: {state.get('supplier_called', False)}")
-            print(f"   📋 Booking Created: {state.get('booking_created', False)}")
-            print(f"   📱 Payment Link Sent: {state.get('payment_sent', False)}")
-            print(f"   💰 MONEY SECURED: {booking_result.get('success', False)}")
-            
-        except Exception as e:
-            print(f"❌ Business flow failed: {e}")
-            state['booking_error'] = str(e)
-    
-    def _call_supplier_notification(self, supplier_phone: str, postcode: str, service: str, customer_name: str) -> Dict[str, Any]:
-        """Call supplier to NOTIFY about new booking (fire and forget)"""
-        
-        try:
-            from agents.elevenlabs_supplier_caller import ElevenLabsSupplierCaller
-            
-            print(f"📞 NOTIFYING SUPPLIER:")
-            print(f"   📞 Phone: {supplier_phone}")
-            print(f"   📍 Postcode: {postcode}")
-            print(f"   🚛 Service: {service}")
-            print(f"   👤 Customer: {customer_name}")
-            print(f"   💼 PURPOSE: NOTIFICATION (not waiting for confirmation)")
-            
-            # Use SECOND ElevenLabs agent for supplier calls
-            caller = ElevenLabsSupplierCaller(
-                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
-                agent_id=os.getenv('ELEVENLABS_SUPPLIER_AGENT_ID', os.getenv('ELEVENLABS_AGENT_ID')),
-                agent_phone_number_id=os.getenv('ELEVENLABS_SUPPLIER_PHONE_ID', os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID'))
+            message = client.messages.create(
+                body=message_body,
+                from_=self.phone_number,
+                to=clean_phone['phone']
             )
             
-            print(f"🔧 TOOL CALL: caller.call_supplier_for_availability(supplier_phone='{supplier_phone}', service_type='{service}', postcode='{postcode}', date='ASAP')")
+            print(f"✅ Confirmation SMS sent to {clean_phone['phone']}")
             
-            # Fire and forget - don't block business on supplier response
-            result = caller.call_supplier_for_availability(
-                supplier_phone=supplier_phone,
-                service_type=service,
-                postcode=postcode,
-                date="ASAP"
-            )
-            
-            print(f"📞 SUPPLIER NOTIFICATION RESULT: {result}")
-            print(f"📞 BUSINESS CONTINUES REGARDLESS - SUPPLIER WILL CALL BACK IF UNAVAILABLE")
-            
-            return result
-            
-        except Exception as e:
-            print(f"❌ Supplier notification failed: {e}")
-            print(f"📞 BUSINESS CONTINUES - SUPPLIER ISSUE WON'T BLOCK BOOKING")
-            return {'success': False, 'error': str(e)}
-    
-    def _create_booking_quote(self, name: str, phone: str, postcode: str, service: str) -> Dict[str, Any]:
-        """Create booking quote using SMP API with clean postcode format"""
-        
-        try:
-            from tools.smp_api_tool import SMPAPITool
-            
-            smp_tool = SMPAPITool()
-            
-            booking_ref = f"WK-{int(datetime.now().timestamp())}"
-            
-            # CLEAN POSTCODE FOR API (remove spaces, uppercase)
-            clean_postcode = postcode.replace(' ', '').upper()
-            
-            booking_params = {
-                'postcode': clean_postcode,  # API expects: "LS14ED" not "LS1 4ED"
-                'service': service,          # "grab", "skip", or "mav"
-                'type': '8yd',              # Default size
-                'firstName': name,
-                'phone': phone,
-                'booking_ref': booking_ref,
-                'emailAddress': '',
-                'lastName': '',
-                'date': '',
-                'time': ''
+            return {
+                "success": True,
+                "sms_sid": message.sid,
+                "phone": clean_phone['phone'],
+                "booking_ref": booking_ref,
+                "confirmation_sent": True
             }
             
-            print(f"📋 CREATING BOOKING QUOTE:")
-            print(f"   📍 Postcode: '{postcode}' → API: '{clean_postcode}'")
-            print(f"   🚛 Service: {service}")
-            print(f"   👤 Customer: {name}")
-            print(f"   📞 Phone: {phone}")
-            print(f"🔧 TOOL CALL: smp_tool._run(action='create_booking_quote', {booking_params})")
-            
-            result = smp_tool._run(action="create_booking_quote", **booking_params)
-            
-            print(f"📋 BOOKING QUOTE RESULT:")
-            print(f"   ✅ Success: {result.get('success', False)}")
-            print(f"   📋 Booking Ref: {result.get('booking_ref')}")
-            print(f"   💰 Final Price: {result.get('final_price')}")
-            print(f"   💳 Payment Link: {result.get('payment_link')}")
-            
-            return result
-            
         except Exception as e:
-            print(f"❌ Booking quote creation failed: {e}")
-            return {'success': False, 'error': str(e)}
+            print(f"❌ Failed to send confirmation SMS: {e}")
+            return {"success": False, "error": f"SMS sending failed: {str(e)}"}
     
-    def _send_payment_sms(self, customer_phone: str, booking_ref: str, amount: str) -> Dict[str, Any]:
-        """Send payment SMS using SMP API → Koyeb → Twilio chain"""
+    def _clean_phone_number(self, phone: str) -> Dict[str, Any]:
         
-        try:
-            from tools.smp_api_tool import SMPAPITool
-            
-            smp_tool = SMPAPITool()
-            
-            print(f"📱 PAYMENT SMS PROCESS:")
-            print(f"   📞 Customer Phone: {customer_phone}")
-            print(f"   📋 Booking Ref: {booking_ref}")
-            print(f"   💰 Amount: £{amount}")
-            print(f"   🔄 Process: SMP API → Koyeb webhook → Twilio SMS")
-            
-            print(f"🔧 TOOL CALL: smp_tool._run(action='take_payment', customer_phone='{customer_phone}', quote_id='{booking_ref}', amount='{amount}', call_sid='orchestrator')")
-            
-            # This will:
-            # 1. Call SMP API take_payment action
-            # 2. SMP API calls Koyeb /api/send-payment-sms
-            # 3. Koyeb sends SMS via Twilio
-            # 4. Customer gets: "Pay £85 for booking WK123 - Link: https://pay.wasteking.co.uk/123"
-            result = smp_tool._run(
-                action="take_payment",
-                customer_phone=customer_phone,
-                quote_id=booking_ref,
-                amount=amount or "1",
-                call_sid="orchestrator"
-            )
-            
-            print(f"📱 PAYMENT SMS CHAIN RESULT:")
-            print(f"   ✅ SMP API Success: {result.get('success', False)}")
-            print(f"   💳 Payment Link: {result.get('payment_link', 'None')}")
-            print(f"   📱 SMS Sent: {result.get('sms_sent', False)}")
-            print(f"   📞 To Phone: {customer_phone}")
-            
-            return result
-            
-        except Exception as e:
-            print(f"❌ Payment SMS chain failed: {e}")
-            return {'success': False, 'error': str(e)}
-    
-    def _load_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
-        """Load conversation state from storage"""
+        if not phone:
+            return {"valid": False, "error": "No phone number provided"}
         
-        # Try GLOBAL state first (survives instance recreation)
-        global _GLOBAL_CONVERSATION_STATES
-        if conversation_id in _GLOBAL_CONVERSATION_STATES:
-            print(f"📁 Loaded state from GLOBAL storage for {conversation_id}")
-            state = _GLOBAL_CONVERSATION_STATES[conversation_id].copy()
-            # Sync to instance cache
-            self.conversation_states[conversation_id] = state.copy()
-            return state
+        # Remove spaces and non-digit characters except +
+        cleaned = re.sub(r'[^\d+]', '', phone)
         
-        # Try in-memory cache
-        if conversation_id in self.conversation_states:
-            print(f"📁 Loaded state from memory for {conversation_id}")
-            state = self.conversation_states[conversation_id].copy()
-            # Sync to global cache
-            _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
-            return state
+        # Handle different UK phone formats
+        if cleaned.startswith('07'):
+            # 07xxxxxxxxx -> +447xxxxxxxxx
+            cleaned = f"+44{cleaned[1:]}"
+        elif cleaned.startswith('0'):
+            # 0xxxxxxxxxx -> +44xxxxxxxxxx
+            cleaned = f"+44{cleaned[1:]}"
+        elif not cleaned.startswith('+44'):
+            # Assume UK number if no country code
+            cleaned = f"+44{cleaned}"
         
-        # Try persistent storage
-        if hasattr(self.storage, 'get'):
-            stored_state = self.storage.get(f"conv_state_{conversation_id}")
-            if stored_state:
-                if isinstance(stored_state, str):
-                    stored_state = json.loads(stored_state)
-                print(f"📁 Loaded state from storage for {conversation_id}")
-                # Sync to both caches
-                self.conversation_states[conversation_id] = stored_state
-                _GLOBAL_CONVERSATION_STATES[conversation_id] = stored_state.copy()
-                return stored_state.copy()
+        # Validate UK mobile number format
+        if not re.match(r'^\+447\d{9}$', cleaned):
+            return {
+                "valid": False, 
+                "error": f"Invalid UK mobile number format: {phone}. Expected format: 07xxxxxxxxx"
+            }
         
-        # Return empty state
-        print(f"📁 No existing state for {conversation_id}, creating new")
-        default_state = {
-            'conversation_id': conversation_id,
-            'created_at': datetime.now().isoformat(),
-            'messages': [],
-            'extracted_info': {}
-        }
-        
-        return default_state
-    
-    def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
-        """Extract key information from message and update state"""
-        
-        message_lower = message.lower()
-        extracted = state.get('extracted_info', {})
-        
-        # Extract postcode - CLEAN FORMAT FOR API
-        postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # Standard format: M1 1AB
-            r'\b(LS\d{4})\b',  # LS1480 format  
-            r'\b([A-Z]{1,2}\d{1,4})\b'  # Partial postcodes
-        ]
-        
-        for pattern in postcode_patterns:
-            postcode_match = re.search(pattern, message.upper())
-            if postcode_match:
-                # CLEAN POSTCODE FOR API: Remove spaces, uppercase
-                raw_postcode = postcode_match.group(1)
-                clean_postcode = raw_postcode.replace(' ', '').upper()
-                extracted['postcode'] = clean_postcode
-                print(f"✅ FOUND POSTCODE: '{raw_postcode}' → CLEANED: '{clean_postcode}' (for API)")
-                break
-        
-        # Extract phone number
-        phone_patterns = [
-            r'\b0\d{10}\b',  # 07823656762
-            r'\b\d{11}\b',   # 07823656762
-            r'\b0\d{4}\s?\d{6}\b',  # 07823 656762
-            r'\b0\d{3}\s?\d{3}\s?\d{4}\b'  # 078 236 56762
-        ]
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, message)
-            if phone_match:
-                extracted['phone'] = phone_match.group(0).replace(' ', '')
-                print(f"✅ FOUND PHONE: {extracted['phone']}")
-                break
-        
-        # Extract name
-        name_patterns = [
-            r'\bname\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', # My name is John Smith
-            r'\bmy\s+name\s+is\s+([A-Z][a-z]+)\b',
-            r'\bi\s+am\s+([A-Z][a-z]+)\b',
-            r'\b([A-Z][a-z]+)\b'
-        ]
-        
-        for pattern in name_patterns:
-            name_match = re.search(pattern, message)
-            if name_match:
-                extracted['name'] = name_match.group(1)
-                print(f"✅ FOUND NAME: {extracted['name']}")
-                break
-        
-        # Extract waste types
-        waste_keywords = [
-            'brick', 'bricks', 'rubble', 'concrete', 'soil', 'muck', 'sand', 'gravel',
-            'furniture', 'sofa', 'construction', 'building', 'demolition', 'garden',
-            'household', 'general', 'mixed', 'renovation', 'clearance', 'bags', 'books'
-        ]
-        
-        found_waste = []
-        for keyword in waste_keywords:
-            if keyword in message_lower:
-                found_waste.append(keyword)
-        
-        if found_waste:
-            # Combine with existing waste types
-            existing_waste = extracted.get('waste_type', [])
-            if isinstance(existing_waste, str):
-                existing_waste = existing_waste.split(', ')
-            elif not isinstance(existing_waste, list):
-                existing_waste = []
-            
-            all_waste = list(set(existing_waste + found_waste))
-            extracted['waste_type'] = ', '.join(all_waste)
-            print(f"✅ FOUND WASTE: {extracted['waste_type']}")
-        
-        # Extract skip size
-        size_patterns = [
-            r'(\d+)\s*ya?rd',
-            r'(\d+)\s*cubic',
-            r'(\d+)ya?rd',
-            r'(\d+)yd'
-        ]
-        for pattern in size_patterns:
-            size_match = re.search(pattern, message_lower)
-            if size_match:
-                extracted['size'] = f"{size_match.group(1)}yd"
-                extracted['type'] = f"{size_match.group(1)}yd"
-                print(f"✅ FOUND SIZE: {extracted['size']}")
-                break
-        
-        # Check for booking intent
-        booking_keywords = ['book', 'booking', 'schedule', 'arrange', 'order', 'confirm']
-        if any(keyword in message_lower for keyword in booking_keywords):
-            extracted['wants_booking'] = True
-            print(f"✅ BOOKING INTENT DETECTED")
-        
-        # Update state
-        state['extracted_info'] = extracted
-        
-        # Copy key extracted info to top level for easier access
-        if 'postcode' in extracted:
-            state['postcode'] = extracted['postcode']
-        if 'phone' in extracted:
-            state['phone'] = extracted['phone']
-        if 'name' in extracted:
-            state['name'] = extracted['name']
-        if 'waste_type' in extracted:
-            state['waste_type'] = extracted['waste_type']
-        if 'size' in extracted:
-            state['size'] = extracted['size']
-            state['type'] = extracted['size']
-        if 'wants_booking' in extracted:
-            state['wants_booking'] = extracted['wants_booking']
-        
-        # Log what we have collected so far
-        print(f"✅ STATE UPDATED:")
-        print(f"   📍 Postcode: {state.get('postcode', 'Missing')}")
-        print(f"   🗑️ Waste: {state.get('waste_type', 'Missing')}")
-        print(f"   👤 Name: {state.get('name', 'Missing')}")
-        print(f"   📞 Phone: {state.get('phone', 'Missing')}")
-        print(f"   💰 Has Pricing: {state.get('has_pricing', False)}")
-    
-    def _save_conversation_state(self, conversation_id: str, state: Dict[str, Any], 
-                               message: str, response: str, agent_used: str):
-        """Save conversation state to storage"""
-        
-        # Add this message to history
-        if 'messages' not in state:
-            state['messages'] = []
-        
-        state['messages'].append({
-            "timestamp": datetime.now().isoformat(),
-            "customer_message": message,
-            "agent_response": response,
-            "agent_used": agent_used
-        })
-        
-        # Keep only last 20 messages
-        if len(state['messages']) > 100:
-            state['messages'] = state['messages'][-20:]
-        
-        state['last_updated'] = datetime.now().isoformat()
-        
-        # Save to BOTH in-memory cache AND global state
-        global _GLOBAL_CONVERSATION_STATES
-        self.conversation_states[conversation_id] = state.copy()
-        _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
-        
-        print(f"💾 Saved state for {conversation_id} (total: {len(_GLOBAL_CONVERSATION_STATES)})")
-        
-        # Save to persistent storage if available
-        if hasattr(self.storage, 'set'):
-            try:
-                state_json = json.dumps(state, default=str)
-                self.storage.set(f"conv_state_{conversation_id}", state_json)
-                print(f"💾 Saved state to storage for {conversation_id}")
-            except Exception as e:
-                print(f"⚠️ Failed to save to storage: {e}")
-    
-    def _determine_agent(self, message: str, context: Dict = None) -> tuple:
-        """YOUR ORIGINAL routing logic: grab handles everything except skip and mav"""
-        
-        message_lower = message.lower()
-        
-        # 1. EXPLICIT SERVICE MENTIONS ONLY
-        
-        # Man & Van explicit requests
-        if any(phrase in message_lower for phrase in [
-            'man and van', 'man & van', 'mav', 'removal service', 'house removal', 'office removal'
-        ]):
-            return 'mav', 'explicit_mav_request'
-        
-        # Skip hire explicit requests 
-        if any(phrase in message_lower for phrase in [
-            'skip', 'skip hire', 'container', 'bin hire', 'waste container'
-        ]):
-            return 'skip_hire', 'explicit_skip_request'
-        
-        # 2. EVERYTHING ELSE GOES TO GRAB (as per your original logic)
-        return 'grab_hire', 'grab_handles_everything_else'
-    
-    def get_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
-        """Get current conversation state"""
-        return self._load_conversation_state(conversation_id)
-    
-    def get_agent_stats(self) -> Dict[str, Any]:
-        """Get statistics about agent usage"""
-        agent_usage = {}
-        total_messages = 0
-        
-        global _GLOBAL_CONVERSATION_STATES
-        
-        for state in _GLOBAL_CONVERSATION_STATES.values():
-            for entry in state.get('messages', []):
-                agent = entry.get('agent_used', 'unknown')
-                agent_usage[agent] = agent_usage.get(agent, 0) + 1
-                total_messages += 1
-        
-        return {
-            "total_messages_processed": total_messages,
-            "agent_usage": agent_usage,
-            "active_conversations": len(_GLOBAL_CONVERSATION_STATES)
-        }
+        return {"valid": True, "phone": cleaned}
