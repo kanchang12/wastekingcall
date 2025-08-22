@@ -142,12 +142,10 @@ class SMPAPITool(BaseTool):
             self._log_error(f"Failed to send Koyeb JSON for booking {booking_ref}", e)
             return {"success": False, "error": str(e)}
 
-
-    
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
-                    type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Get pricing - STEP 1 & 2: Create booking and get price"""
-        
+    
         # Validate required parameters
         if not postcode:
             return {"success": False, "error": "Missing required parameter: postcode"}
@@ -155,35 +153,31 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: service"}
         if not type:
             return {"success": False, "error": "Missing required parameter: type"}
-            
+    
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
-        
+    
         try:
             # STEP 1: Create booking
             booking_ref = self._create_wasteking_booking()
             if not booking_ref:
                 return {"success": False, "message": "Failed to create booking"}
-
-            # STEP 2: Get pricing with payload format
-            search_payload = {
-                "payload": {
-                    "postCode": postcode,
-                    "service": service,
-                    "type": type
-                }
-            }
-            
-            # Get pricing
-            response_data = self._update_wasteking_booking(booking_ref, search_payload)
+    
+            # STEP 2: Send booking data (to Koyeb endpoint or WasteKing)
+            response_data = self._update_wasteking_booking(
+                booking_ref=booking_ref,
+                postcode=postcode,
+                service=service,
+                type_=type
+            )
             if not response_data:
                 return {"success": False, "message": "No pricing data"}
-
+    
             quote_data = response_data.get('quote', {})
             price = quote_data.get('price', '0')
             supplier_phone = quote_data.get('supplierPhone', "+447823656907")
             supplier_name = quote_data.get('supplierName', "Default Supplier")
-            
-            # Return format - same as Flask code
+    
+            # Return format
             return {
                 "success": True,
                 "booking_ref": booking_ref,
@@ -194,7 +188,7 @@ class SMPAPITool(BaseTool):
                 "service": service,
                 "type": type
             }
-                
+    
         except Exception as e:
             self._log_error("Marketplace request failed", e)
             return {
@@ -203,10 +197,11 @@ class SMPAPITool(BaseTool):
                 "error": str(e)
             }
     
+    
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
-                             postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Create booking quote - STEP 3: Add customer details"""
-        
+    
         # Validate required parameters
         if not type:
             return {"success": False, "error": "Missing required parameter: type"}
@@ -220,34 +215,26 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: phone"}
         if not kwargs.get('booking_ref'):
             return {"success": False, "error": "Missing required parameter: booking_ref"}
-            
+    
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
-        
+    
         try:
             booking_ref = kwargs.get('booking_ref')
-
-            # STEP 3: Add customer details with payload format - match curl exactly
-            payment_payload = {
-                "payload": {
-                    "postCode": postcode,
-                    "service": service,
-                    "type": type,
-                    "firstname": kwargs.get('firstName'),  # lowercase as per curl
-                    "Phone": kwargs.get('phone')  # uppercase P as per curl
-                }
-            }
-            
-            self._log_with_timestamp(f"📋 Payment payload: {json.dumps(payment_payload, indent=2)}")
-            
-            # Call WasteKing booking update
-            payment_response = self._update_wasteking_booking(booking_ref, payment_payload)
-            
+    
+            # STEP 3: Send booking quote data
+            payment_response = self._update_wasteking_booking(
+                booking_ref=booking_ref,
+                postcode=postcode,
+                service=service,
+                type_=type
+            )
+    
             if payment_response and payment_response.get('quote', {}).get('paymentLink'):
                 payment_link = payment_response['quote']['paymentLink']
                 final_price = payment_response['quote'].get('price', '0')
             else:
                 return {"success": False, "message": "No payment link available"}
-
+    
             return {
                 "success": True,
                 "message": "Booking confirmed",
@@ -256,9 +243,10 @@ class SMPAPITool(BaseTool):
                 "final_price": final_price,
                 "customer_phone": kwargs.get("phone", "")
             }
-                
+    
         except Exception as e:
             return {"success": False, "error": f"Booking quote failed: {str(e)}"}
+
     
     def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
