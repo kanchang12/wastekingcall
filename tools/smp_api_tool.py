@@ -57,29 +57,34 @@ class SMPAPITool(BaseTool):
         else:
             self._log_with_timestamp(f"ERROR: {message}", "ERROR")
 
-    def _send_koyeb_webhook(self, url, data_payload):
-        """Send actual data to Koyeb endpoint"""
+    def _send_koyeb_webhook(self, url, data_payload, method="POST"):
+        """Send actual data to Koyeb endpoint with GET and POST support"""
         try:
-            self._log_with_timestamp(f"🔄 Sending to Koyeb URL: {url}")
+            self._log_with_timestamp(f"🔄 Sending {method} to Koyeb URL: {url}")
             self._log_with_timestamp(f"🔄 Sending to Koyeb: {json.dumps(data_payload, indent=2)}")
             
-            response = requests.post(url, json=data_payload, timeout=30)
+            if method.upper() == "GET":
+                # For GET, send data as query parameters
+                response = requests.get(url, params=data_payload, timeout=30)
+            else:
+                # For POST, send data as JSON
+                response = requests.post(url, json=data_payload, timeout=30)
             
-            self._log_with_timestamp(f"🔄 Koyeb response status: {response.status_code}")
-            self._log_with_timestamp(f"🔄 Koyeb response text: {response.text}")
+            self._log_with_timestamp(f"🔄 Koyeb {method} response status: {response.status_code}")
+            self._log_with_timestamp(f"🔄 Koyeb {method} response text: {response.text}")
             
             if response.status_code in [200, 201]:
                 return response.json()
             else:
-                return {"success": False, "error": f"Koyeb failed with status {response.status_code}: {response.text}"}
+                return {"success": False, "error": f"Koyeb {method} failed with status {response.status_code}: {response.text}"}
                 
         except Exception as e:
-            self._log_error("Koyeb request failed", e)
+            self._log_error(f"Koyeb {method} request failed", e)
             return {"success": False, "error": str(e)}
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing - send postcode, service, type directly to Flask app"""
+        """Get pricing - try both GET and POST methods with proper postcode formatting"""
         
         if not postcode:
             return {"success": False, "error": "Missing required parameter: postcode"}
@@ -87,11 +92,20 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: service"}
         if not type:
             return {"success": False, "error": "Missing required parameter: type"}
-            
+        
+        # Fix postcode formatting - ensure proper space format (e.g., "M1 1AB")
+        postcode = postcode.upper().strip()
+        if len(postcode) >= 5 and ' ' not in postcode:
+            # Add space if missing (e.g., "M11AB" -> "M1 1AB")
+            if postcode[2:3].isdigit():
+                postcode = f"{postcode[:3]} {postcode[3:]}"
+            else:
+                postcode = f"{postcode[:2]} {postcode[2:]}"
+        
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
-            # Send the required fields directly to the Flask app
+            # Prepare payload
             payload = {
                 "postcode": postcode,
                 "service": service,
@@ -99,10 +113,18 @@ class SMPAPITool(BaseTool):
             }
             
             price_url = f"{self.koyeb_url}/api/wasteking-get-price"
-            response = self._send_koyeb_webhook(price_url, payload)
+            
+            # Try POST first
+            print("🔄 Trying POST method...")
+            response = self._send_koyeb_webhook(price_url, payload, method="POST")
+            
+            # If POST fails, try GET
+            if not response or not response.get("success"):
+                print("🔄 POST failed, trying GET method...")
+                response = self._send_koyeb_webhook(price_url, payload, method="GET")
             
             if not response or not response.get("success"):
-                return {"success": False, "message": "No pricing data"}
+                return {"success": False, "message": "No pricing data available"}
 
             # Extract the data from Flask app response
             booking_ref = response.get('booking_ref')
@@ -135,7 +157,7 @@ class SMPAPITool(BaseTool):
     
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Create booking quote - Send actual data to Koyeb confirm_booking endpoint"""
+        """Create booking quote - Try both POST and GET methods"""
         
         # Validate required parameters
         if not type:
@@ -172,9 +194,16 @@ class SMPAPITool(BaseTool):
                 "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
             }
             
-            # Send to Koyeb endpoint
             url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
-            response_data = self._send_koyeb_webhook(url, data_payload)
+            
+            # Try POST first
+            print("🔄 Trying POST method for booking confirmation...")
+            response_data = self._send_koyeb_webhook(url, data_payload, method="POST")
+            
+            # If POST fails, try GET
+            if not response_data or not response_data.get("success"):
+                print("🔄 POST failed, trying GET method for booking confirmation...")
+                response_data = self._send_koyeb_webhook(url, data_payload, method="GET")
             
             if not response_data or not response_data.get("success"):
                 return {"success": False, "message": "Booking confirmation failed"}
@@ -198,7 +227,7 @@ class SMPAPITool(BaseTool):
     
     def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Send payment link to customer"""
+        """Send payment link to customer - Only POST method supported"""
         
         if not customer_phone:
             return {"success": False, "error": "Missing required parameter: customer_phone"}
@@ -217,7 +246,8 @@ class SMPAPITool(BaseTool):
             }
             
             url = f"{self.koyeb_url}/api/send-payment-sms"
-            response_data = self._send_koyeb_webhook(url, data_payload)
+            # Payment SMS only supports POST method
+            response_data = self._send_koyeb_webhook(url, data_payload, method="POST")
             
             if not response_data or response_data.get("status") != "success":
                 return {"success": False, "error": "Payment processing failed"}
