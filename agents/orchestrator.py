@@ -19,19 +19,19 @@ Conversation History: {conversation_history}
 Currently Active Services: {active_services}
 
 Available Agents:
-- skip_hire: Handle skip hire, container rental, waste bins
-- mav: Handle man & van services, collection, clearance
+- skip_hire: Handle skip hire, container rental, waste bins, construction waste, bricks, concrete, soil
+- mav: Handle man & van services, collection, clearance, furniture removal, "man van", "man and van"
 - grab_hire: Handle grab lorries, muck away services  
 
 Routing Rules:
-- Skip hire: skip, container, bin, waste disposal
-- Man & Van: collection, clearance, furniture removal, "man van", "man and van"
+- Skip hire: skip, container, bin, waste disposal, construction waste, bricks, concrete
+- Man & Van: collection, clearance, furniture removal, "man van", "man and van", household items
 - Grab hire: grab lorry, muck away, bulk earth/soil removal
 - If unclear, route to skip_hire as default
 
 Return JSON: {{"primary_agent": "agent_name", "reasoning": "explanation"}}
 
-You are taking way too much time asking same questions over and over and overwriting the data, you need to give the info in first time only. DOnt waste time and say I am looking into it
+Be direct and route immediately - don't waste time with long explanations.
 """
         )
         
@@ -40,6 +40,7 @@ You are taking way too much time asking same questions over and over and overwri
     def extract_customer_data(self, message: str) -> Dict[str, str]:
         """Extract customer data that can be shared across agents"""
         data = {}
+        message_lower = message.lower()
         
         # Extract postcode with proper UK format
         postcode_patterns = [
@@ -51,11 +52,40 @@ You are taking way too much time asking same questions over and over and overwri
             if match:
                 pc = match.group(1).upper()
                 if len(pc.replace(' ', '')) >= 5:
-                    if ' ' not in pc and len(pc) >= 6:
-                        data['postcode'] = pc[:-3] + ' ' + pc[-3:]
-                    else:
-                        data['postcode'] = pc
+                    data['postcode'] = pc
+                    print(f"🔧 ORCHESTRATOR extracted postcode: {pc}")
                     break
+        
+        # Extract waste type for skip hire
+        waste_types = ['construction', 'building', 'renovation', 'garden', 'household', 'mixed', 'bricks', 'concrete', 'soil', 'rubble', 'mortar', 'industrial']
+        found_waste = []
+        for waste_type in waste_types:
+            if waste_type in message_lower:
+                found_waste.append(waste_type)
+        
+        if found_waste:
+            data['waste_type'] = ', '.join(found_waste)
+            print(f"🔧 ORCHESTRATOR extracted waste type: {data['waste_type']}")
+        
+        # Extract items for man & van
+        mav_items = ['bags', 'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 'books', 'clothes', 'boxes', 'appliances', 'fridge', 'freezer']
+        found_items = []
+        for item in mav_items:
+            if item in message_lower:
+                found_items.append(item)
+        
+        if found_items:
+            data['items'] = ', '.join(found_items)
+            print(f"🔧 ORCHESTRATOR extracted items: {data['items']}")
+        
+        # Extract skip size
+        size_patterns = [r'(\d+)\s*(?:yard|yd)', r'(\d+)yd']
+        for pattern in size_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                data['size'] = f"{match.group(1)}yd"
+                print(f"🔧 ORCHESTRATOR extracted size: {data['size']}")
+                break
         
         # Extract name
         name_patterns = [
@@ -67,6 +97,7 @@ You are taking way too much time asking same questions over and over and overwri
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
                 data['firstName'] = match.group(1).title()
+                print(f"🔧 ORCHESTRATOR extracted name: {data['firstName']}")
                 break
         
         # Extract phone
@@ -79,6 +110,7 @@ You are taking way too much time asking same questions over and over and overwri
             match = re.search(pattern, message)
             if match:
                 data['phone'] = match.group(1)
+                print(f"🔧 ORCHESTRATOR extracted phone: {data['phone']}")
                 break
         
         # Extract email
@@ -86,7 +118,9 @@ You are taking way too much time asking same questions over and over and overwri
         email_match = re.search(email_pattern, message)
         if email_match:
             data['emailAddress'] = email_match.group()
+            print(f"🔧 ORCHESTRATOR extracted email: {data['emailAddress']}")
             
+        print(f"🔧 ORCHESTRATOR TOTAL EXTRACTED: {data}")
         return data
     
     def process_customer_message(self, message: str, conversation_id: str, call_sid: str = None, elevenlabs_conversation_id: str = None) -> Dict[str, Any]:
@@ -112,6 +146,9 @@ You are taking way too much time asking same questions over and over and overwri
         # Extract and persist customer data
         extracted_data = self.extract_customer_data(message)
         state["customer_data"].update(extracted_data)
+        
+        # Debug: Show what's saved
+        print(f"🔧 SAVED STATE: {state['customer_data']}")
         
         state["conversation_history"].append({"type": "customer", "message": message})
         
