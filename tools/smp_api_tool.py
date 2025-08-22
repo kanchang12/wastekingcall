@@ -14,13 +14,13 @@ class SMPAPITool(BaseTool):
     WasteKing API for pricing, booking quotes, payment processing, and supplier calling.
     
     Required parameters for each action:
-    - get_pricing: postcode, service, type (e.g., postcode="[POSTCODE]", service="skip-hire", type="8yd")
+    - get_pricing: postcode, service, type (e.g., postcode="LS14ED", service="skip-hire", type="8yd")
     - create_booking_quote: postcode, service, type, firstName, phone
     - take_payment: call_sid, customer_phone, quote_id, amount
     - call_supplier: supplier_phone, supplier_name, booking_ref, message
     """
-    base_url: str = Field(default=os.getenv('WASTEKING_BASE_URL', "https://wk-smp-api-dev.azurewebsites.net/"))
-    access_token: str = Field(default=os.getenv('WASTEKING_ACCESS_TOKEN', 'your_access_token_here'))
+    base_url: str = Field(default="https://wk-smp-api-dev.azurewebsites.net/")
+    access_token: str = Field(default="wk-KZPY-tGF-@d.Aby9fpvMC_VVWkX-GN.i7jCBhF3xceoFfhmawaNc.RH.G_-kwk8*")
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         try:
@@ -43,8 +43,21 @@ class SMPAPITool(BaseTool):
             print(f"❌ SMP API Error: {str(e)}")
             return {"success": False, "error": str(e)}
     
+    def _log_with_timestamp(self, message, level="INFO"):
+        """Enhanced logging with timestamps"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{timestamp}] [{level}] {message}")
+
+    def _log_error(self, message, error=None):
+        """Log errors"""
+        if error:
+            self._log_with_timestamp(f"ERROR: {message}: {error}", "ERROR")
+        else:
+            self._log_with_timestamp(f"ERROR: {message}", "ERROR")
+
     def _create_wasteking_booking(self):
-        """Create booking reference with WasteKing"""
+        """Create booking reference - EXACT copy from your Flask code"""
         try:
             headers = {
                 "x-wasteking-request": self.access_token,
@@ -65,19 +78,19 @@ class SMPAPITool(BaseTool):
                 response_json = response.json()
                 booking_ref = response_json.get('bookingRef')
                 if booking_ref:
-                    print(f"✅ Created booking: {booking_ref}")
+                    self._log_with_timestamp(f"✅ Created booking: {booking_ref}")
                     time.sleep(1)
                     return booking_ref
             
-            print(f"❌ Failed to create booking: {response.status_code}")
+            self._log_with_timestamp(f"❌ Failed to create booking: {response.status_code}")
             return None
                 
         except Exception as e:
-            print(f"❌ Failed to create booking: {str(e)}")
+            self._log_error("Failed to create booking", e)
             return None
 
     def _update_wasteking_booking(self, booking_ref, update_data):
-        """Update booking with WasteKing"""
+        """Update booking - EXACT copy from your Flask code"""
         try:
             headers = {
                 "x-wasteking-request": self.access_token,
@@ -87,7 +100,11 @@ class SMPAPITool(BaseTool):
             payload = {"bookingRef": booking_ref}
             payload.update(update_data)
             
+            self._log_with_timestamp(f"🔄 Updating booking {booking_ref} with payload: {json.dumps(payload, indent=2)}")
+            
             update_url = f"{self.base_url}api/booking/update/"
+            self._log_with_timestamp(f"🔄 Update URL: {update_url}")
+            
             response = requests.post(
                 update_url,
                 headers=headers,
@@ -96,20 +113,23 @@ class SMPAPITool(BaseTool):
                 verify=False
             )
             
+            self._log_with_timestamp(f"🔄 Update response status: {response.status_code}")
+            self._log_with_timestamp(f"🔄 Update response text: {response.text}")
+            
             if response.status_code in [200, 201]:
-                print(f"✅ Updated booking {booking_ref}")
+                self._log_with_timestamp(f"✅ Updated booking {booking_ref}")
                 return response.json()
             else:
-                print(f"❌ Failed to update booking: {response.status_code}")
+                self._log_with_timestamp(f"❌ Failed to update booking: {response.status_code}")
                 return None
                 
         except Exception as e:
-            print(f"❌ Failed to update booking {booking_ref}: {str(e)}")
+            self._log_error(f"Failed to update booking {booking_ref}", e)
             return None
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing using WasteKing API flow"""
+        """Get pricing - EXACT copy from your Flask wasteking_marketplace function"""
         
         # Validate required parameters
         if not postcode:
@@ -122,12 +142,12 @@ class SMPAPITool(BaseTool):
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
-            # Step 1: Create booking
+            # Create booking - EXACT same as your Flask code
             booking_ref = self._create_wasteking_booking()
             if not booking_ref:
-                return {"success": False, "error": "Failed to create booking"}
+                return {"success": False, "message": "Failed to create booking"}
 
-            # Step 2: Search payload for WasteKing
+            # Search payload - EXACT same format as your Flask code
             search_payload = {
                 "search": {
                     "postCode": postcode,
@@ -136,21 +156,22 @@ class SMPAPITool(BaseTool):
                 }
             }
             
-            # Step 3: Get pricing
+            # Get pricing - EXACT same as your Flask code
             response_data = self._update_wasteking_booking(booking_ref, search_payload)
             if not response_data:
-                return {"success": False, "error": "No pricing data"}
+                return {"success": False, "message": "No pricing data"}
 
             quote_data = response_data.get('quote', {})
             price = quote_data.get('price', '0')
             supplier_phone = quote_data.get('supplierPhone', "+447823656907")
             supplier_name = quote_data.get('supplierName', "Default Supplier")
             
+            # Return format - EXACT same as your Flask code
             return {
                 "success": True,
                 "booking_ref": booking_ref,
                 "price": price,
-                "supplier_phone": supplier_phone,
+                "real_supplier_phone": supplier_phone,
                 "supplier_name": supplier_name,
                 "postcode": postcode,
                 "service": service,
@@ -158,7 +179,12 @@ class SMPAPITool(BaseTool):
             }
                 
         except Exception as e:
-            return {"success": False, "error": f"Pricing request failed: {str(e)}"}
+            self._log_error("Marketplace request failed", e)
+            return {
+                "success": False,
+                "message": "Marketplace request failed",
+                "error": str(e)
+            }
     
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
@@ -175,45 +201,37 @@ class SMPAPITool(BaseTool):
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
         try:
-            # Step 1: Create or get booking
+            # Get or create booking ref
             booking_ref = kwargs.get('booking_ref')
             if not booking_ref:
                 booking_ref = self._create_wasteking_booking()
                 if not booking_ref:
-                    return {"success": False, "error": "Failed to create booking"}
+                    return {"success": False, "message": "Failed to create booking"}
 
-            # Step 2: Update with customer details
-            customer_data = {
-                "firstName": kwargs.get("firstName", ""),
-                "lastName": kwargs.get("lastName", ""),
-                "phone": kwargs.get("phone", ""),
-                "emailAddress": kwargs.get("emailAddress", ""),
-                "postcode": postcode,
-                "service": service,
-                "type": type
-            }
-            
-            # Update booking with customer data
-            response_data = self._update_wasteking_booking(booking_ref, customer_data)
-            if not response_data:
-                return {"success": False, "error": "Failed to update booking"}
+            customer_phone = kwargs.get('customer_phone') or kwargs.get('phone')
+            if not customer_phone:
+                return {"success": False, "message": "Phone number required"}
 
-            # Step 3: Generate payment link
+            # Generate payment link - EXACT same as your Flask code
             payment_payload = {"action": "quote"}
             payment_response = self._update_wasteking_booking(booking_ref, payment_payload)
             
             if payment_response and payment_response.get('quote', {}).get('paymentLink'):
                 payment_link = payment_response['quote']['paymentLink']
-                price = payment_response['quote'].get('price', '0')
+                base_price = float(payment_response['quote'].get('price', '0'))
             else:
-                return {"success": False, "error": "No payment link available"}
+                return {"success": False, "message": "No payment link available"}
+
+            # Calculate final price (simplified)
+            final_price = base_price
 
             return {
                 "success": True,
+                "message": "Booking confirmed",
                 "booking_ref": booking_ref,
                 "payment_link": payment_link,
-                "price": price,
-                "message": "Booking quote created successfully"
+                "final_price": final_price,
+                "customer_phone": customer_phone
             }
                 
         except Exception as e:
@@ -259,11 +277,11 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": f"Payment processing failed: {str(e)}"}
 
     def _send_payment_sms(self, booking_ref: str, phone: str, payment_link: str, amount: str):
-        """Send payment SMS via Twilio"""
+        """Send payment SMS via Twilio - EXACT copy from your Flask code"""
         try:
             from twilio.rest import Client
             
-            # Clean phone number
+            # Clean and format phone number
             if phone.startswith('0'):
                 phone = f"+44{phone[1:]}"
             elif phone.startswith('44'):
@@ -273,9 +291,10 @@ class SMPAPITool(BaseTool):
                 
             phone_pattern = r'^\+44\d{9,10}$'
             if not re.match(phone_pattern, phone):
+                self._log_with_timestamp(f"❌ Invalid UK phone number format: {phone}")
                 return {"success": False, "message": "Invalid UK phone number format"}
             
-            # Get Twilio credentials
+            # Create SMS message with the final adjusted amount
             TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
             TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
             TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
@@ -290,17 +309,19 @@ Pay securely: {payment_link}
 After payment, you'll get confirmation.
 Thank you!"""
             
+            # Send SMS
             message = client.messages.create(
                 body=message_body,
                 from_=TWILIO_PHONE_NUMBER,
                 to=phone
             )
             
-            print(f"✅ SMS sent to {phone} for booking {booking_ref}. SID: {message.sid}")
+            self._log_with_timestamp(f"✅ SMS sent to {phone} for booking {booking_ref} with final amount £{amount}. SID: {message.sid}")
+            
             return {"success": True, "message": "SMS sent successfully", "sms_sid": message.sid}
             
         except Exception as e:
-            print(f"❌ Failed to send SMS: {str(e)}")
+            self._log_error("Failed to send payment SMS", e)
             return {"success": False, "message": str(e)}
     
     def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
