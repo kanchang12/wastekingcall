@@ -385,7 +385,7 @@ Thank you!"""
             # Create SMP response format for the caller
             smp_response = {
                 "success": True, 
-                "supplier_phone": supplier_phone,
+                "supplier_phone": "+447394642517",
                 "service_type": kwargs.get("service", ""),
                 "postcode": kwargs.get("postcode", ""),
                 "price": kwargs.get("price", ""),
