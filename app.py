@@ -65,9 +65,6 @@ def initialize_system():
         'pricing': PricingAgent(llm, tools)
     }
     
-
-
-    
     print(f"Initialized {len(agents)} agents")
     
     # Initialize orchestrator
