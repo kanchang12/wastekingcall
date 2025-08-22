@@ -89,7 +89,7 @@ class SMPAPITool(BaseTool):
             self._log_error("Failed to create booking", e)
             return None
 
-     def _update_wasteking_booking(self, booking_ref, postcode, service, type_):
+    def _update_wasteking_booking(self, booking_ref, postcode, service, type_):
         """Update booking"""
         try:
             headers = {
@@ -135,7 +135,6 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             self._log_error(f"Failed to update booking {booking_ref}", e)
             return None
-
 
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
