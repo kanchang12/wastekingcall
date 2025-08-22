@@ -13,12 +13,16 @@ class ManVanAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
+
+        self.rules_processor = RulesProcessor()
+        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
+        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
         
         # Simple prompt - no complex PDF rules
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Man & Van agent.
 Out side office calls, you will attend, never forward but try to make the sale get price, get booking link, given nothing else is stopping, make the sale
-
+""" + rule_text + """
 HEAVY ITEMS RULE:
 Man & Van CANNOT handle: bricks, concrete, soil, rubble, sand, stone
 
