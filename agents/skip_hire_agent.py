@@ -163,16 +163,7 @@ Ready for API: True
                 print(f"✅ FOUND PHONE: {phone}")
                 break
         
-        # Extract waste type
-        waste_types = ['household', 'construction', 'garden', 'mixed', 'bricks', 'concrete', 'soil', 'rubble']
-        found = []
-        message_lower = message.lower()
-        for waste in waste_types:
-            if waste in message_lower:
-                found.append(waste)
-        if found:
-            data['waste_type'] = ', '.join(found)
-            print(f"✅ FOUND WASTE: {data['waste_type']}")
+
         
         # Extract size
         if re.search(r'8\s*yard|8yd|eight', message.lower()):
