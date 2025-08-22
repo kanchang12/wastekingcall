@@ -1,4 +1,23 @@
 # agents/orchestrator.py - COMPLETE FIXED VERSION WITH AUTOMATED BOOKING FLOW
+# 
+# KEY FEATURES:
+# ✅ Keeps existing PDF rules as guidelines
+# ✅ Hardcoded supplier number: +447394642517
+# ✅ Uses second ElevenLabs agent for supplier calls  
+# ✅ Full console logging for all tool calls
+# ✅ Automated booking workflow progression
+# ✅ Global state storage for persistence
+#
+# REQUIRED ENVIRONMENT VARIABLES:
+# ELEVENLABS_API_KEY=your_api_key
+# ELEVENLABS_AGENT_ID=main_agent_id (for customers)
+# ELEVENLABS_AGENT_PHONE_NUMBER_ID=main_phone_id
+# ELEVENLABS_SUPPLIER_AGENT_ID=supplier_agent_id (for calling suppliers)
+# ELEVENLABS_SUPPLIER_PHONE_ID=supplier_phone_id
+# TWILIO_ACCOUNT_SID=your_twilio_sid
+# TWILIO_AUTH_TOKEN=your_twilio_token
+# TWILIO_PHONE_NUMBER=your_twilio_number
+#
 import re
 import json
 from typing import Dict, Any, Optional, List
@@ -120,13 +139,40 @@ class AgentOrchestrator:
             print("🔄 AUTO-EXECUTING: Booking confirmation")
             
             if self._has_booking_requirements(state):
+                # CUSTOMER SAID YES - CALL HARDCODED SUPPLIER FIRST
+                print("📞 CUSTOMER CONFIRMED BOOKING - CALLING HARDCODED SUPPLIER +447394642517")
+                supplier_result = self._call_hardcoded_supplier_for_availability(state)
+                
                 booking_result = self._auto_create_booking(state)
                 if booking_result['success']:
                     state['workflow_stage'] = 'booking_confirmed'
                     state['booking_data'] = booking_result
+                    state['supplier_called'] = supplier_result.get('success', False)
                     
-                    # Immediately call supplier and send payment
-                    return self._auto_complete_booking_flow(state, booking_result)
+                    # Also send payment link
+                    payment_result = self._auto_send_payment_link(state, booking_result)
+                    state['payment_sent'] = payment_result.get('success', False)
+                    
+                    customer_name = state.get('extracted_info', {}).get('name') or state.get('name', 'Customer')
+                    
+                    response = f"""✅ **Booking Confirmed!**
+
+👤 **Customer:** {customer_name}
+📋 **Reference:** {booking_result.get('booking_ref')}
+💰 **Total:** {booking_result.get('final_price')}
+
+📞 **Supplier contacted for availability** 
+📱 **Payment link sent to your phone**
+🚛 **Collection will be arranged**
+
+Thank you for choosing WasteKing!"""
+                    
+                    return {
+                        'auto_handled': True,
+                        'response': response,
+                        'agent_used': 'orchestrator_booking_confirmed',
+                        'stage': 'booking_confirmed'
+                    }
                 else:
                     return {'auto_handled': False}
             else:
@@ -203,7 +249,11 @@ class AgentOrchestrator:
             postcode = state.get('postcode') or state.get('extracted_info', {}).get('postcode')
             size = state.get('size') or '8yd'  # Default size
             
-            print(f"🔄 AUTO-PRICING: service={service}, postcode={postcode}, size={size}")
+            print(f"🔄 AUTO-PRICING CALL:")
+            print(f"   📍 Postcode: {postcode}")
+            print(f"   🚛 Service: {service}")
+            print(f"   📦 Size: {size}")
+            print(f"   🔧 FULL TOOL CALL: smp_tool._run(action='get_pricing', postcode='{postcode}', service='{service}', type='{size}')")
             
             result = smp_tool._run(
                 action="get_pricing",
@@ -211,6 +261,13 @@ class AgentOrchestrator:
                 service=service,
                 type=size
             )
+            
+            print(f"🔄 PRICING RESULT:")
+            print(f"   ✅ Success: {result.get('success')}")
+            print(f"   💰 Price: {result.get('price')}")
+            print(f"   📋 Booking Ref: {result.get('booking_ref')}")
+            print(f"   📞 Supplier Phone: {result.get('real_supplier_phone')}")
+            print(f"   🔧 FULL RESPONSE: {json.dumps(result, indent=2)}")
             
             return result
             
@@ -224,6 +281,11 @@ class AgentOrchestrator:
         price = pricing_result.get('price', 'Contact for pricing')
         service = state.get('service', 'waste collection')
         postcode = state.get('postcode', '')
+        
+        print(f"🔄 AUTO-CONFIRM BOOKING:")
+        print(f"   💰 Price: {price}")
+        print(f"   🚛 Service: {service}")
+        print(f"   📍 Postcode: {postcode}")
         
         response = f"""Perfect! I've got you a quote:
 
@@ -263,9 +325,23 @@ Would you like to book this? I just need your name and phone number to confirm."
                 'time': ''
             }
             
-            print(f"🔄 AUTO-BOOKING: {booking_params}")
+            print(f"🔄 AUTO-BOOKING CALL:")
+            print(f"   👤 Customer: {booking_params['firstName']}")
+            print(f"   📞 Phone: {booking_params['phone']}")
+            print(f"   📍 Postcode: {booking_params['postcode']}")
+            print(f"   🚛 Service: {booking_params['service']}")
+            print(f"   📦 Type: {booking_params['type']}")
+            print(f"   🔧 FULL TOOL CALL: smp_tool._run(action='create_booking_quote', {booking_params})")
             
             result = smp_tool._run(action="create_booking_quote", **booking_params)
+            
+            print(f"🔄 BOOKING RESULT:")
+            print(f"   ✅ Success: {result.get('success')}")
+            print(f"   📋 Booking Ref: {result.get('booking_ref')}")
+            print(f"   💰 Final Price: {result.get('final_price')}")
+            print(f"   💳 Payment Link: {result.get('payment_link')}")
+            print(f"   🔧 FULL RESPONSE: {json.dumps(result, indent=2)}")
+            
             return result
             
         except Exception as e:
@@ -321,41 +397,115 @@ Thank you for choosing WasteKing!"""
                 'stage': 'booking_confirmed'
             }
     
-    def _auto_call_supplier(self, state: Dict[str, Any], booking_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Automatically call supplier"""
+    def _call_hardcoded_supplier_for_availability(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Call hardcoded supplier +447394642517 for availability when customer says YES"""
+        
+        SUPPLIER_PHONE = "+447394642517"  # HARDCODED as requested
         
         try:
-            from tools.smp_api_tool import SMPAPITool
+            from agents.elevenlabs_supplier_caller import ElevenLabsSupplierCaller
+            import os
             
-            smp_tool = SMPAPITool()
-            pricing_data = state.get('pricing_data', {})
+            print(f"📞 CUSTOMER SAID YES - CALLING HARDCODED SUPPLIER:")
+            print(f"   📞 Supplier Phone: {SUPPLIER_PHONE}")
+            print(f"   🚛 Service: {state.get('service', '')}")
+            print(f"   📍 Postcode: {state.get('postcode', '')}")
+            print(f"   👤 Customer: {state.get('extracted_info', {}).get('name', 'Customer')}")
             
-            supplier_phone = pricing_data.get('real_supplier_phone', '+447823656907')
-            supplier_name = pricing_data.get('supplier_name', 'Local Supplier')
-            booking_ref = booking_result.get('booking_ref', '')
-            customer_name = state.get('extracted_info', {}).get('name') or state.get('name', '')
+            # Use SECOND ElevenLabs agent for supplier availability calls
+            supplier_agent_id = os.getenv('ELEVENLABS_SUPPLIER_AGENT_ID', os.getenv('ELEVENLABS_AGENT_ID'))
+            supplier_phone_id = os.getenv('ELEVENLABS_SUPPLIER_PHONE_ID', os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID'))
             
-            call_message = f"New booking from WasteKing: {customer_name}, Reference: {booking_ref}"
+            print(f"📞 Using ElevenLabs Supplier Config:")
+            print(f"   🤖 Agent ID: {supplier_agent_id}")
+            print(f"   📞 Phone ID: {supplier_phone_id}")
             
-            result = smp_tool._run(
-                action="call_supplier",
-                supplier_phone=supplier_phone,
-                supplier_name=supplier_name,
-                booking_ref=booking_ref,
-                message=call_message,
-                customer_name=customer_name,
-                customer_phone=state.get('phone', ''),
-                service=state.get('service', ''),
-                postcode=state.get('postcode', ''),
-                price=booking_result.get('final_price', '')
+            caller = ElevenLabsSupplierCaller(
+                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
+                agent_id=supplier_agent_id,
+                agent_phone_number_id=supplier_phone_id
             )
             
-            print(f"🔄 SUPPLIER CALL RESULT: {result}")
+            print(f"📞 CALLING FOR AVAILABILITY CHECK:")
+            print(f"   🔧 TOOL CALL: caller.call_supplier_for_availability(supplier_phone='{SUPPLIER_PHONE}', service_type='{state.get('service', '')}', postcode='{state.get('postcode', '')}', date='ASAP')")
+            
+            result = caller.call_supplier_for_availability(
+                supplier_phone=SUPPLIER_PHONE,
+                service_type=state.get('service', ''),
+                postcode=state.get('postcode', ''),
+                date="ASAP"
+            )
+            
+            print(f"📞 AVAILABILITY CALL RESULT:")
+            print(f"   ✅ Success: {result.get('success')}")
+            print(f"   📞 Called: {SUPPLIER_PHONE}")
+            print(f"   🆔 Conversation ID: {result.get('conversation_id')}")
+            print(f"   📞 Call SID: {result.get('call_sid')}")
+            print(f"   🔧 FULL RESPONSE: {json.dumps(result, indent=2)}")
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Availability call failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _auto_call_supplier(self, state: Dict[str, Any], booking_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Automatically call HARDCODED supplier for availability check"""
+        
+        # HARDCODED SUPPLIER NUMBER as requested
+        SUPPLIER_PHONE = "+447394642517"
+        
+        try:
+            from agents.elevenlabs_supplier_caller import ElevenLabsSupplierCaller
+            import os
+            
+            print(f"📞 CALLING HARDCODED SUPPLIER:")
+            print(f"   📞 Supplier Phone: {SUPPLIER_PHONE}")
+            print(f"   🚛 Service: {state.get('service', '')}")
+            print(f"   📍 Postcode: {state.get('postcode', '')}")
+            print(f"   📋 Booking Ref: {booking_result.get('booking_ref', '')}")
+            
+            # Use SECOND ElevenLabs agent for supplier calls (with fallback)
+            supplier_agent_id = os.getenv('ELEVENLABS_SUPPLIER_AGENT_ID', os.getenv('ELEVENLABS_AGENT_ID'))
+            supplier_phone_id = os.getenv('ELEVENLABS_SUPPLIER_PHONE_ID', os.getenv('ELEVENLABS_AGENT_PHONE_NUMBER_ID'))
+            
+            print(f"📞 ElevenLabs Config:")
+            print(f"   🔑 API Key: {'✅ Set' if os.getenv('ELEVENLABS_API_KEY') else '❌ Missing'}")
+            print(f"   🤖 Supplier Agent ID: {supplier_agent_id}")
+            print(f"   📞 Supplier Phone ID: {supplier_phone_id}")
+            
+            caller = ElevenLabsSupplierCaller(
+                elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
+                agent_id=supplier_agent_id,
+                agent_phone_number_id=supplier_phone_id
+            )
+            
+            call_message = f"New booking availability check from WasteKing. Customer: {state.get('extracted_info', {}).get('name', 'Customer')}, Reference: {booking_result.get('booking_ref', '')}, Service: {state.get('service', '')}, Area: {state.get('postcode', '')}"
+            
+            print(f"📞 FULL SUPPLIER CALL:")
+            print(f"   📞 Phone: {SUPPLIER_PHONE}")
+            print(f"   💬 Message: {call_message}")
+            print(f"   🔧 TOOL CALL: caller.call_supplier_for_availability(supplier_phone='{SUPPLIER_PHONE}', service_type='{state.get('service', '')}', postcode='{state.get('postcode', '')}', date='ASAP')")
+            
+            result = caller.call_supplier_for_availability(
+                supplier_phone=SUPPLIER_PHONE,
+                service_type=state.get('service', ''),
+                postcode=state.get('postcode', ''),
+                date="ASAP"
+            )
+            
+            print(f"📞 SUPPLIER CALL RESULT:")
+            print(f"   ✅ Success: {result.get('success')}")
+            print(f"   📞 Phone Called: {SUPPLIER_PHONE}")
+            print(f"   🆔 Conversation ID: {result.get('conversation_id')}")
+            print(f"   📞 Call SID: {result.get('call_sid')}")
+            print(f"   🔧 FULL RESPONSE: {json.dumps(result, indent=2)}")
+            
             return result
             
         except Exception as e:
             print(f"❌ Supplier call failed: {e}")
-            return {'success': False, 'error': str(e)}
+            return {'success': False, 'error': str(e), 'supplier_phone': SUPPLIER_PHONE}
     
     def _auto_send_payment_link(self, state: Dict[str, Any], booking_result: Dict[str, Any] = None) -> Dict[str, Any]:
         """Automatically send payment link"""
@@ -375,6 +525,12 @@ Thank you for choosing WasteKing!"""
             
             customer_phone = state.get('extracted_info', {}).get('phone') or state.get('phone', '')
             
+            print(f"📱 SENDING PAYMENT LINK:")
+            print(f"   📞 Customer Phone: {customer_phone}")
+            print(f"   📋 Booking Ref: {booking_ref}")
+            print(f"   💰 Amount: £{price}")
+            print(f"   🔧 TOOL CALL: smp_tool._run(action='take_payment', customer_phone='{customer_phone}', quote_id='{booking_ref}', amount='{price}', call_sid='orchestrator_auto')")
+            
             result = smp_tool._run(
                 action="take_payment",
                 customer_phone=customer_phone,
@@ -383,7 +539,13 @@ Thank you for choosing WasteKing!"""
                 call_sid="orchestrator_auto"
             )
             
-            print(f"🔄 PAYMENT LINK RESULT: {result}")
+            print(f"📱 PAYMENT LINK RESULT:")
+            print(f"   ✅ Success: {result.get('success')}")
+            print(f"   📞 Phone: {customer_phone}")
+            print(f"   💳 Payment Link: {result.get('payment_link')}")
+            print(f"   📱 SMS Sent: {result.get('sms_sent')}")
+            print(f"   🔧 FULL RESPONSE: {json.dumps(result, indent=2)}")
+            
             return result
             
         except Exception as e:
