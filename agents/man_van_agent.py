@@ -1,5 +1,5 @@
-# agents/man_van_agent.py - FIXED IMPORT VERSION
-# CHANGES: Fixed class name and imports to work with your app.py
+# agents/man_van_agent.py - FIXED BOOKING LOGIC
+# CHANGES: Fixed to recognize booking requests and create actual bookings
 
 import json 
 import re
@@ -7,9 +7,6 @@ from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-
-# CHANGE: Removed utils import that might not exist in your setup
-# from utils.rules_processor import RulesProcessor
 
 class ManVanAgent:
     def __init__(self, llm, tools: List[BaseTool]):
@@ -24,11 +21,19 @@ bricks, mortar, concrete, soil, tiles, construction waste, industrial waste, rub
 
 If heavy items detected: "Sorry mate, bricks/concrete/soil are too heavy for Man & Van. You need Skip Hire or Grab Hire for that."
 
-WORKFLOW:
+CRITICAL WORKFLOW:
 1. Check for heavy items FIRST - if found, REFUSE and suggest other services
-2. Light items + postcode → Call smp_api(action="get_pricing", postcode=X, service="mav", type="6yd")
-3. If customer wants to book → Call smp_api(action="create_booking_quote") 
+2. If customer says "book" or wants to book: IMMEDIATELY call smp_api with action="create_booking_quote" 
+3. If just asking for price: Call smp_api with action="get_pricing" then ask "Shall I book this for you?"
 4. Missing data → Ask once
+
+BOOKING KEYWORDS: book, booking, confirm, yes book it, proceed, go ahead, arrange
+
+API CALLS:
+- For pricing: smp_api(action="get_pricing", postcode=X, service="mav", type="6yd")
+- For booking: smp_api(action="create_booking_quote", postcode=X, service="mav", type="6yd", firstName=X, phone=X, booking_ref=X)
+
+AFTER PRICING: Always ask "Shall I book this Man & Van for you?"
 
 LIGHT ITEMS WE HANDLE: furniture, appliances, household goods, office items, bags, boxes, garden waste (leaves/grass only)
 
@@ -38,10 +43,10 @@ Be direct. Follow rules strictly."""),
         ])
         
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
-        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=8)
+        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=10)
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        """Enhanced processing with context handling"""
+        """Enhanced processing with booking recognition"""
         
         # Extract data with context
         extracted_data = self._extract_data(message, context)
@@ -54,12 +59,18 @@ Be direct. Follow rules strictly."""),
             print(f"🔧 HEAVY ITEMS DETECTED: {heavy_items}")
             return f"Sorry mate, {', '.join(heavy_items)} are too heavy for our Man & Van service. You need Skip Hire or Grab Hire for that type of waste. Let me transfer you to the right team!"
         
+        # Check if this is a booking request
+        is_booking_request = extracted_data.get('is_booking_request', False)
+        
         # Check if ready for API call (suitable items + postcode)
         postcode = extracted_data.get('postcode')
         items = extracted_data.get('items')
         
         if postcode and items and not heavy_items:
-            print(f"🔧 READY FOR API - calling immediately")
+            print(f"🔧 READY FOR API - {'BOOKING' if is_booking_request else 'PRICING'}")
+            
+            # Determine action
+            action = "create_booking_quote" if is_booking_request else "get_pricing"
             
             extracted_info = f"""
 Postcode: {postcode}
@@ -67,6 +78,8 @@ Items: {items}
 Service: mav
 Type: 6yd
 Heavy Items: {heavy_items}
+Is Booking Request: {is_booking_request}
+Action: {action}
 Customer Name: {extracted_data.get('firstName', 'NOT PROVIDED')}
 Customer Phone: {extracted_data.get('phone', 'NOT PROVIDED')}
 Ready for API: True
@@ -75,6 +88,7 @@ Ready for API: True
             agent_input = {
                 "input": message,
                 "extracted_info": extracted_info,
+                "action": action,
                 **extracted_data
             }
             
@@ -90,8 +104,20 @@ Ready for API: True
         
         return "Let me get you a Man & Van quote."
     
+    def _is_booking_request(self, message: str) -> bool:
+        """Check if customer wants to book (not just get pricing)"""
+        message_lower = message.lower()
+        
+        booking_keywords = [
+            'book', 'booking', 'confirm', 'yes book', 'proceed', 'go ahead', 
+            'arrange', 'order', 'want to book', 'please book', 'book it',
+            'yes please', 'confirm booking', 'make booking'
+        ]
+        
+        return any(keyword in message_lower for keyword in booking_keywords)
+    
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
-        """Enhanced data extraction with context handling"""
+        """Enhanced data extraction with booking recognition"""
         data = {}
         
         # Check context first
@@ -115,17 +141,26 @@ Ready for API: True
         data['heavy_items'] = heavy_items
         
         # Extract customer info
-        name_match = re.search(r'(?:name is|i\'m|call me)\s+(\w+)', message, re.IGNORECASE)
+        name_match = re.search(r'(?:name is|i\'m|call me|name)\s+(\w+)', message, re.IGNORECASE)
         if name_match:
             data['firstName'] = name_match.group(1).title()
         
-        phone_match = re.search(r'\b(\d{11})\b', message)
+        phone_match = re.search(r'\b(07\d{9}|\d{11})\b', message)
         if phone_match:
             data['phone'] = phone_match.group(1)
         
         email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
         if email_match:
             data['emailAddress'] = email_match.group()
+        
+        # Check if booking request
+        is_booking_request = self._is_booking_request(message)
+        data['is_booking_request'] = is_booking_request
+        
+        # Generate booking reference if booking request
+        if is_booking_request:
+            import uuid
+            data['booking_ref'] = str(uuid.uuid4())
         
         data['service'] = 'mav'
         data['type'] = '6yd'
