@@ -108,7 +108,7 @@ class SMPAPITool(BaseTool):
         response = requests.post(
             update_url,
             headers=headers,
-            "bookingRef": booking_ref,
+            "bookingRef"= booking_ref,
             json=payload,
             timeout=20,
             verify=False
