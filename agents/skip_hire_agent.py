@@ -1,111 +1,182 @@
 import json 
 import re
+import os
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-from utils.rules_processor import RulesProcessor
+import PyPDF2
 
 class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        self.rules_processor = RulesProcessor()
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+        
+        # Direct PDF import from data/rules/all_rules.pdf
+        pdf_rules = self._load_pdf_rules()
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Skip Hire agent. Be FAST and DIRECT.
+            ("system", f"""You are a Skip Hire agent. Be FAST and DIRECT.
 
-CRITICAL: NEVER ASK FOR DATA ALREADY PROVIDED IN CONTEXT
+RULES FROM PDF KNOWLEDGE BASE:
+{pdf_rules}
 
-RULES:
-- If you have postcode + waste type: IMMEDIATELY call smp_api
-- service="skip" ALWAYS  
-- Never ask for data already provided
-- Get price fast
+CRITICAL WORKFLOW:
+1. If customer provides ALL info (postcode + waste + name + phone): IMMEDIATELY call create_booking_quote
+2. If just pricing info: Call get_pricing then ask to book
+3. Missing data → Ask once
 
-WORKFLOW:
-Has postcode + waste → Call smp_api(action="get_pricing", postcode=X, service="skip", type="8yd")
-Missing postcode → "I need your postcode for pricing"
-Missing waste type → "What type of waste do you have?"
+API CALLS:
+- BOOKING: smp_api(action="create_booking_quote", postcode=X, service="skip", firstName=X, phone=X, booking_ref=X)
+- PRICING: smp_api(action="get_pricing", postcode=X, service="skip")
 
-Be direct. Get price. No chat. NEVER GIVE FAKE PRICES!
+IMPORTANT: Customer says "Book" + provides name/phone = CREATE BOOKING IMMEDIATELY
 
-Follow team rules:
-""" + rule_text + """
-
-CRITICAL: Call smp_api with service="skip" when you have postcode + waste."""),
-            ("human", """Customer: {input}
-
-CONTEXT DATA (DON'T ASK FOR THIS AGAIN):
-Postcode: {postcode}
-Waste: {waste_type}
-Size: {size}
-Name: {name}
-Phone: {phone}
-
-Don't ask for data you already have!"""),
+Follow PDF rules above. Be direct."""),
+            ("human", "Customer: {input}\n\nData: {extracted_info}"),
             ("placeholder", "{agent_scratchpad}")
         ])
         
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
-        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=2)
+        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=10)
+    
+    def _load_pdf_rules(self) -> str:
+        """Load rules directly from data/rules/all_rules.pdf"""
+        try:
+            pdf_path = "data/rules/all_rules.pdf"
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text()
+                return text
+            else:
+                return "PDF rules not found - using basic skip hire rules"
+        except Exception as e:
+            print(f"Error loading PDF rules: {e}")
+            return "PDF rules not available - using basic skip hire rules"
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        # Get data from context first, then message
-        extracted = context.get('extracted_info', {}) if context else {}
+        """Process with proper data extraction"""
         
-        postcode = (context.get('postcode') if context else None) or extracted.get('postcode') or self._get_postcode(message) or "NOT PROVIDED"
-        waste_type = (context.get('waste_type') if context else None) or extracted.get('waste_type') or self._get_waste_type(message) or "NOT PROVIDED"
-        size = (context.get('size') if context else None) or extracted.get('size') or self._get_size(message) or "8yd"
-        name = (context.get('name') if context else None) or extracted.get('name') or "NOT PROVIDED"
-        phone = (context.get('phone') if context else None) or extracted.get('phone') or "NOT PROVIDED"
+        extracted_data = self._extract_data_properly(message, context)
         
-        print(f"🔧 SKIP HIRE AGENT:")
-        print(f"   📍 Postcode: {postcode}")
-        print(f"   🗑️ Waste: {waste_type}")
-        print(f"   📦 Size: {size}")
+        print(f"🔧 SKIP DATA: {json.dumps(extracted_data, indent=2)}")
         
-        # Check if ready for API call
-        if postcode != "NOT PROVIDED" and waste_type != "NOT PROVIDED":
-            print(f"🔧 READY FOR API - calling immediately")
-            
-            agent_input = {
-                "input": message,
-                "postcode": postcode.replace(' ', ''),
-                "waste_type": waste_type,
-                "size": size,
-                "name": name,
-                "phone": phone
-            }
-            
-            response = self.executor.invoke(agent_input)
-            return response["output"]
+        postcode = extracted_data.get('postcode')
+        waste_type = extracted_data.get('waste_type')
+        has_name = bool(extracted_data.get('firstName'))
+        has_phone = bool(extracted_data.get('phone'))
         
-        # Missing data - ask directly
-        if postcode == "NOT PROVIDED":
-            return "I need your postcode to get skip hire pricing. What's your postcode?"
+        wants_booking = 'book' in message.lower()
+        has_all_info = postcode and waste_type and has_name and has_phone
         
-        if waste_type == "NOT PROVIDED":
-            return "What type of waste do you have? (construction, garden, household, etc.)"
+        print(f"🎯 DECISION:")
+        print(f"   - Wants booking: {wants_booking}")
+        print(f"   - Has all info: {has_all_info}")
+        print(f"   - Name: {extracted_data.get('firstName')}")
+        print(f"   - Phone: {extracted_data.get('phone')}")
         
-        return "Let me get you a skip hire quote."
+        if wants_booking and has_all_info:
+            action = "create_booking_quote"
+            print(f"🔧 CREATING BOOKING IMMEDIATELY")
+        elif postcode and waste_type:
+            action = "get_pricing"
+            print(f"🔧 GETTING PRICING FIRST")
+        else:
+            if not postcode:
+                return "What's your postcode?"
+            if not waste_type:
+                return "What type of waste?"
+            return "Let me get you a quote."
+        
+        extracted_info = f"""
+Postcode: {postcode}
+Waste Type: {waste_type}
+Service: skip
+Customer Name: {extracted_data.get('firstName', 'NOT PROVIDED')}
+Customer Phone: {extracted_data.get('phone', 'NOT PROVIDED')}
+Action: {action}
+Ready for API: True
+"""
+        
+        if action == "create_booking_quote":
+            import uuid
+            extracted_data['booking_ref'] = str(uuid.uuid4())
+        
+        agent_input = {
+            "input": message,
+            "extracted_info": extracted_info,
+            "action": action,
+            **extracted_data
+        }
+        
+        response = self.executor.invoke(agent_input)
+        return response["output"]
     
-    def _get_postcode(self, message: str) -> str:
-        patterns = [r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})']
-        for pattern in patterns:
-            match = re.search(pattern, message.upper())
+    def _extract_data_properly(self, message: str, context: Dict = None) -> Dict[str, Any]:
+        """Proper data extraction that actually works"""
+        data = {}
+        
+        if context:
+            for key in ['postcode', 'firstName', 'phone', 'emailAddress', 'waste_type']:
+                if context.get(key):
+                    data[key] = context[key]
+        
+        postcode_patterns = [
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',
+            r'M1\s*1AB|M11AB',
+        ]
+        for pattern in postcode_patterns:
+            matches = re.findall(pattern, message.upper())
+            for match in matches:
+                clean = match.strip().replace(' ', '')
+                if len(clean) >= 5:
+                    data['postcode'] = clean
+                    print(f"✅ FOUND POSTCODE: {clean}")
+                    break
+        
+        name_patterns = [
+            r'[Nn]ame\s+(\w+\s+\w+)',
+            r'[Nn]ame\s+(\w+)',
+            r'my name is (\w+)',
+            r'i\'m (\w+)',
+            r'call me (\w+)'
+        ]
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
             if match:
-                return match.group(1).replace(' ', '')
-        return ""
-    
-    def _get_waste_type(self, message: str) -> str:
-        waste_types = ['construction', 'building', 'garden', 'household', 'mixed', 'bricks', 'concrete', 'soil', 'rubble', 'mortar']
-        found = [waste for waste in waste_types if waste in message.lower()]
-        return ', '.join(found) if found else ""
-    
-    def _get_size(self, message: str) -> str:
-        pattern = r'(\d+)\s*(?:yard|yd)'
-        match = re.search(pattern, message.lower())
-        return f"{match.group(1)}yd" if match else "8yd"
+                name = match.group(1).strip().title()
+                data['firstName'] = name
+                print(f"✅ FOUND NAME: {name}")
+                break
+        
+        phone_patterns = [
+            r'payment link to (\d{11})',
+            r'link to (\d{11})',
+            r'to (\d{11})',
+            r'\b(07\d{9})\b',
+            r'\b(\d{11})\b'
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, message)
+            if match:
+                phone = match.group(1)
+                data['phone'] = phone
+                print(f"✅ FOUND PHONE: {phone}")
+                break
+        
+        waste_types = ['household', 'construction', 'garden', 'mixed', 'bricks', 'concrete', 'soil', 'rubble']
+        found = []
+        message_lower = message.lower()
+        for waste in waste_types:
+            if waste in message_lower:
+                found.append(waste)
+        if found:
+            data['waste_type'] = ', '.join(found)
+            print(f"✅ FOUND WASTE: {data['waste_type']}")
+        
+        data['service'] = 'skip'
+        
+        return data
