@@ -61,20 +61,23 @@ INSTRUCTION: If customer has all info and says "book", call create_booking_quote
         )
     
     def _load_pdf_rules(self) -> str:
-        """Load rules directly from data/rules/all_rules.pdf"""
+        """Load rules directly from data/rules/all rules.pdf"""
         try:
-            pdf_path = "data/rules/all_rules.pdf"
+            pdf_path = "data/rules/all rules.pdf"
+            print(f"🔧 GRAB AGENT: Loading PDF rules from: {pdf_path}")
             if os.path.exists(pdf_path):
                 with open(pdf_path, 'rb') as file:
                     pdf_reader = PyPDF2.PdfReader(file)
                     text = ""
                     for page in pdf_reader.pages:
                         text += page.extract_text()
+                print(f"🔧 GRAB AGENT: PDF rules loaded successfully ({len(text)} characters)")
                 return text
             else:
+                print(f"❌ GRAB AGENT: PDF rules not found at {pdf_path}")
                 return "PDF rules not found - using basic grab hire rules"
         except Exception as e:
-            print(f"Error loading PDF rules: {e}")
+            print(f"❌ GRAB AGENT: Error loading PDF rules: {e}")
             return "PDF rules not available - using basic grab hire rules"
     
     def process_message(self, message: str, context: Dict = None) -> str:
@@ -134,7 +137,10 @@ Ready for API: True
         agent_input.update(extracted_data)
         
         try:
+            print(f"🔧 GRAB AGENT: Executing agent with action: {action}")
+            print(f"🔧 GRAB AGENT: Tools available: {[tool.name for tool in self.tools]}")
             response = self.executor.invoke(agent_input)
+            print(f"🔧 GRAB AGENT: Agent execution completed successfully")
             return response["output"]
         except Exception as e:
             print(f"❌ Grab Agent Error: {str(e)}")
