@@ -91,17 +91,26 @@ class SMPAPITool(BaseTool):
 
     def _update_wasteking_booking(self, booking_ref, update_data):
         """Update booking"""
-        try:
-            headers = {
-                "x-wasteking-request": self.access_token,
-                "Content-Type": "application/json"
-            }
-            
-            payload1 = {
-                "bookingRef": booking_ref,
-                "payload": update_data
-            }
-            
+        headers = {
+            "x-wasteking-request": self.WASTEKING_ACCESS_TOKEN,
+            "Content-Type": "application/json"
+        }
+        
+        payload = {"postCode = "postcode",
+                   service = "service",
+                   type = "type_"
+                  }
+        
+        
+        update_url = f"{WASTEKING_BASE_URL}api/booking/update/"
+        response = requests.post(
+            update_url,
+            headers=headers,
+            "bookingRef": booking_ref,
+            json=payload,
+            timeout=20,
+            verify=False
+        )
             self._log_with_timestamp(f"🔄 Updating booking {booking_ref} with payload: {json.dumps(payload, indent=2)}")
             
             update_url = f"{self.base_url}api/booking/update/"
