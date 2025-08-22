@@ -96,10 +96,12 @@ class SMPAPITool(BaseTool):
             "Content-Type": "application/json"
         }
         
-        payload = {"postCode = "postcode",
-                   service = "service",
-                   type = "type_"
-                  }
+        payload = {
+            "postCode": postcode,
+            "service": service,
+            "type": type_
+        }
+
         
         
         update_url = f"{WASTEKING_BASE_URL}api/booking/update/"
