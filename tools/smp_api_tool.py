@@ -97,18 +97,19 @@ class SMPAPITool(BaseTool):
         }
         
         payload = {
-            "postCode": postcode,
-            "service": service,
-            "type": type_
+            "bookingRef": booking_ref,   # top-level
+            "payload": {
+                "postCode": postcode,
+                "service": service,
+                "type": type_
+            }
         }
-
         
         
         update_url = f"{WASTEKING_BASE_URL}api/booking/update/"
         response = requests.post(
             update_url,
             headers=headers,
-            "bookingRef"= booking_ref,
             json=payload,
             timeout=20,
             verify=False
