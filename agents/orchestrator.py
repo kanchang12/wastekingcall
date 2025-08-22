@@ -1,431 +1,628 @@
-# agents/orchestrator.py - COMPLETE FIXED VERSION WITH GLOBAL STATE
-# FIXES: Global state storage, better regex, complete state persistence
-
+# agents/orchestrator.py - COMPLETE FIXED VERSION WITH AUTOMATED BOOKING FLOW
 import re
 import json
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-# GLOBAL STATE STORAGE - survives instance recreation
+# GLOBAL STATE STORAGE
 _GLOBAL_CONVERSATION_STATES = {}
 
 class AgentOrchestrator:
-    """Orchestrates customer interactions between specialized agents with persistent state"""
-    
-    def __init__(self, llm, agents: Dict[str, Any], storage_backend=None):
-        self.llm = llm
-        self.agents = agents
-        self.storage = storage_backend or {}
-        # Use GLOBAL state to survive instance recreation
-        global _GLOBAL_CONVERSATION_STATES
-        self.conversation_states = _GLOBAL_CONVERSATION_STATES
-        
-        print("✅ AgentOrchestrator initialized with GLOBAL state management")
-        print(f"✅ Available agents: {list(agents.keys())}")
-        print(f"✅ Existing conversations: {len(self.conversation_states)}")
-        print("🎯 ROUTING LOGIC: Grab handles ALL except mav and skip")
-    
-    def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
-        """Process customer message and route to appropriate agent with state management"""
-        
-        print(f"\n🎯 ORCHESTRATOR: Processing message for {conversation_id}")
-        print(f"📝 Message: {message}")
-        print(f"📋 Incoming Context: {context}")
-        
-        try:
-            # Load existing conversation state
-            conversation_state = self._load_conversation_state(conversation_id)
-            
-            # Extract and update state from current message
-            self._extract_and_update_state(message, conversation_state)
-            
-            # Merge with incoming context
-            if context:
-                conversation_state.update(context)
-            
-            print(f"🔄 Updated Conversation State: {conversation_state}")
-            
-            # Determine which agent should handle this message
-            agent_choice, routing_reason = self._determine_agent(message, conversation_state)
-            
-            print(f"🎯 ROUTING TO: {agent_choice.upper()} agent ({routing_reason})")
-            
-            # Get the appropriate agent
-            agent = self.agents.get(agent_choice)
-            if not agent:
-                print(f"❌ Agent '{agent_choice}' not found, defaulting to grab_hire")
-                agent = self.agents.get('grab_hire')
-                agent_choice = 'grab_hire'
-            
-            # Update service in state
-            conversation_state['last_service'] = agent_choice
-            conversation_state['service'] = agent_choice.replace('_hire', '').replace('_', '')
-            
-            # Process message with the selected agent, passing full state as context
-            response = agent.process_message(message, conversation_state)
-            
-            # Save updated conversation state
-            self._save_conversation_state(conversation_id, conversation_state, message, response, agent_choice)
-            
-            return {
-                "success": True,
-                "response": response,
-                "agent_used": agent_choice,
-                "routing": {
-                    "agent": agent_choice,
-                    "reason": routing_reason,
-                    "message_processed": True
-                },
-                "conversation_state": conversation_state,
-                "conversation_id": conversation_id,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            print(f"❌ Orchestrator Error: {str(e)}")
-            return {
-                "success": False,
-                "response": "I'm having a technical issue. What's your postcode and what type of waste do you need collected?",
-                "error": str(e),
-                "agent_used": "fallback",
-                "conversation_id": conversation_id
-            }
-    
-    def _load_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
-        """Load conversation state from storage"""
-        
-        # Try GLOBAL state first (survives instance recreation)
-        global _GLOBAL_CONVERSATION_STATES
-        if conversation_id in _GLOBAL_CONVERSATION_STATES:
-            print(f"📁 Loaded state from GLOBAL storage for {conversation_id}")
-            state = _GLOBAL_CONVERSATION_STATES[conversation_id].copy()
-            # Sync to instance cache
-            self.conversation_states[conversation_id] = state.copy()
-            return state
-        
-        # Try in-memory cache
-        if conversation_id in self.conversation_states:
-            print(f"📁 Loaded state from memory for {conversation_id}")
-            state = self.conversation_states[conversation_id].copy()
-            # Sync to global cache
-            _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
-            return state
-        
-        # Try persistent storage
-        if hasattr(self.storage, 'get'):
-            stored_state = self.storage.get(f"conv_state_{conversation_id}")
-            if stored_state:
-                if isinstance(stored_state, str):
-                    stored_state = json.loads(stored_state)
-                print(f"📁 Loaded state from storage for {conversation_id}")
-                # Sync to both caches
-                self.conversation_states[conversation_id] = stored_state
-                _GLOBAL_CONVERSATION_STATES[conversation_id] = stored_state.copy()
-                return stored_state.copy()
-        
-        # Return empty state
-        print(f"📁 No existing state for {conversation_id}, creating new")
-        default_state = {
-            'conversation_id': conversation_id,
-            'created_at': datetime.now().isoformat(),
-            'messages': [],
-            'extracted_info': {}
-        }
-        
-        return default_state
-    
-    def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
-        """Extract key information from message and update state"""
-        
-        message_lower = message.lower()
-        extracted = state.get('extracted_info', {})
-        
-        # Extract postcode - BETTER REGEX for LS1480 format
-        postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # Standard format
-            r'\b(LS\d{4})\b',  # LS1480 format
-            r'\b([A-Z]{1,2}\d{1,4})\b'  # Partial postcodes
-        ]
-        
-        for pattern in postcode_patterns:
-            postcode_match = re.search(pattern, message.upper())
-            if postcode_match:
-                extracted['postcode'] = postcode_match.group(1).replace(' ', '')
-                print(f"✅ FOUND POSTCODE: {extracted['postcode']}")
-                break
-        
-        # Extract phone number
-        phone_patterns = [
-            r'\b0\d{10}\b',  # 07823656762
-            r'\b\d{11}\b',   # 07823656762
-            r'\b0\d{4}\s?\d{6}\b',  # 07823 656762
-            r'\b0\d{3}\s?\d{3}\s?\d{4}\b'  # 078 236 56762
-        ]
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, message)
-            if phone_match:
-                extracted['phone'] = phone_match.group(0).replace(' ', '')
-                print(f"✅ FOUND PHONE: {extracted['phone']}")
-                break
-        
-        # Extract name
-        name_patterns = [
-            r'\bname\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', # My name is John Smith
-            r'\bmy\s+name\s+is\s+([A-Z][a-z]+)\b',
-            r'\bi\s+am\s+([A-Z][a-z]+)\b',
-            r'\b([A-Z][a-z]+)\b'
-        ]
-        
-        for pattern in name_patterns:
-            name_match = re.search(pattern, message)
-            if name_match:
-                extracted['name'] = name_match.group(1)
-                print(f"✅ FOUND NAME: {extracted['name']}")
-                break
-        
-        # Extract waste types
-        waste_keywords = [
-            'brick', 'bricks', 'rubble', 'concrete', 'soil', 'muck', 'sand', 'gravel',
-            'furniture', 'sofa', 'construction', 'building', 'demolition', 'garden',
-            'household', 'general', 'mixed', 'renovation', 'clearance', 'bags', 'books'
-        ]
-        
-        found_waste = []
-        for keyword in waste_keywords:
-            if keyword in message_lower:
-                found_waste.append(keyword)
-        
-        if found_waste:
-            # Combine with existing waste types
-            existing_waste = extracted.get('waste_type', [])
-            if isinstance(existing_waste, str):
-                existing_waste = existing_waste.split(', ')
-            elif not isinstance(existing_waste, list):
-                existing_waste = []
-            
-            all_waste = list(set(existing_waste + found_waste))
-            extracted['waste_type'] = ', '.join(all_waste)
-            print(f"✅ FOUND WASTE: {extracted['waste_type']}")
-        
-        # Extract skip size
-        size_patterns = [
-            r'(\d+)\s*ya?rd',
-            r'(\d+)\s*cubic',
-            r'(\d+)ya?rd',
-            r'(\d+)yd'
-        ]
-        for pattern in size_patterns:
-            size_match = re.search(pattern, message_lower)
-            if size_match:
-                extracted['size'] = f"{size_match.group(1)}yd"
-                extracted['type'] = f"{size_match.group(1)}yd"
-                print(f"✅ FOUND SIZE: {extracted['size']}")
-                break
-        
-        # Extract delivery day
-        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-        for day in days:
-            if day in message_lower:
-                extracted['delivery_day'] = day.capitalize()
-                print(f"✅ FOUND DELIVERY DAY: {extracted['delivery_day']}")
-                break
-        
-        # Extract location details
-        location_keywords = ['garage', 'driveway', 'front', 'back', 'side', 'garden', 'road']
-        for keyword in location_keywords:
-            if keyword in message_lower:
-                existing_location = extracted.get('location', '')
-                if keyword not in existing_location.lower():
-                    extracted['location'] = f"{existing_location} {keyword}".strip()
-                    print(f"✅ FOUND LOCATION: {extracted['location']}")
-        
-        # Check for booking intent
-        booking_keywords = ['book', 'booking', 'schedule', 'arrange', 'order', 'confirm']
-        if any(keyword in message_lower for keyword in booking_keywords):
-            extracted['wants_booking'] = True
-            print(f"✅ BOOKING INTENT DETECTED")
-        
-        # Update state
-        state['extracted_info'] = extracted
-        
-        # Copy key extracted info to top level for easier access
-        if 'postcode' in extracted:
-            state['postcode'] = extracted['postcode']
-        if 'phone' in extracted:
-            state['phone'] = extracted['phone']
-        if 'name' in extracted:
-            state['name'] = extracted['name']
-        if 'waste_type' in extracted:
-            state['waste_type'] = extracted['waste_type']
-        if 'size' in extracted:
-            state['size'] = extracted['size']
-            state['type'] = extracted['size']
-        if 'wants_booking' in extracted:
-            state['wants_booking'] = extracted['wants_booking']
-    
-    def _save_conversation_state(self, conversation_id: str, state: Dict[str, Any], 
-                               message: str, response: str, agent_used: str):
-        """Save conversation state to storage"""
-        
-        # Add this message to history
-        if 'messages' not in state:
-            state['messages'] = []
-        
-        state['messages'].append({
-            "timestamp": datetime.now().isoformat(),
-            "customer_message": message,
-            "agent_response": response,
-            "agent_used": agent_used
-        })
-        
-        # Keep only last 20 messages
-        if len(state['messages']) > 100:
-            state['messages'] = state['messages'][-20:]
-        
-        state['last_updated'] = datetime.now().isoformat()
-        
-        # Save to BOTH in-memory cache AND global state
-        global _GLOBAL_CONVERSATION_STATES
-        self.conversation_states[conversation_id] = state.copy()
-        _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
-        
-        print(f"💾 Saved state for {conversation_id} (total: {len(_GLOBAL_CONVERSATION_STATES)})")
-        
-        # Save to persistent storage if available
-        if hasattr(self.storage, 'set'):
-            try:
-                state_json = json.dumps(state, default=str)
-                self.storage.set(f"conv_state_{conversation_id}", state_json)
-                print(f"💾 Saved state to storage for {conversation_id}")
-            except Exception as e:
-                print(f"⚠️ Failed to save to storage: {e}")
-    
-    def _determine_agent(self, message: str, context: Dict = None) -> tuple:
-        """Updated routing logic with state awareness"""
-        
-        message_lower = message.lower()
-        
-        # 1. EXPLICIT SERVICE MENTIONS (Highest Priority)
-        
-        # Man & Van explicit requests
-        if any(phrase in message_lower for phrase in [
-            'man and van', 'man & van', 'mav', 'removal service', 'house removal', 'office removal'
-        ]):
-            return 'mav', 'explicit_mav_request'
-        
-        # Skip hire explicit requests 
-        if any(phrase in message_lower for phrase in [
-            'skip', 'skip hire', 'container', 'bin hire', 'waste container'
-        ]):
-            return 'skip_hire', 'explicit_skip_request'
-        
-        # Grab hire explicit requests
-        if any(phrase in message_lower for phrase in [
-            'grab', 'grab hire', 'lorry', 'truck', 'grab lorry'
-        ]):
-            return 'grab_hire', 'explicit_grab_request'
-        
-        # 2. MATERIAL-BASED ROUTING (Prioritized to prevent loops)
-        materials = self._extract_materials(message)
-        if context and context.get('waste_type'):
-            materials.extend(context['waste_type'].split(', '))
-        
-        # Heavy materials = GRAB
-        heavy_materials = [
-            'soil', 'muck', 'rubble', 'concrete', 'brick', 'bricks', 'stone', 
-            'sand', 'gravel', 'hardcore', 'mortar', 'cement', 'asphalt', 'renovation'
-        ]
-        if any(material in materials for material in heavy_materials):
-            return 'grab_hire', 'heavy_materials_detected'
-        
-        # Light items = Man & Van
-        light_items = [
-            'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 'wardrobe',
-            'appliances', 'fridge', 'freezer', 'washing machine', 'dishwasher',
-            'bags', 'clothes', 'books', 'boxes', 'household goods', 'office furniture'
-        ]
-        if any(item in materials for item in light_items):
-            return 'mav', 'light_items_suitable_for_mav'
-        
-        # Traditional skip waste
-        skip_waste = [
-            'construction waste', 'building waste', 'mixed waste', 'general waste',
-            'household waste', 'garden waste'
-        ]
-        if any(waste in message_lower for waste in skip_waste):
-            return 'skip_hire', 'traditional_skip_waste'
-        
-        # 3. VOLUME/SIZE INDICATORS
-        
-        large_volume_indicators = [
-            'loads of', 'lots of', 'large amount', 'truck full', 'lorry load', 
-            'big job', 'clearance', 'site clearance', 'full house', 'warehouse'
-        ]
-        if any(indicator in message_lower for indicator in large_volume_indicators):
-            return 'grab_hire', 'large_volume_job'
-        
-        # 4. SKIP SIZE INDICATORS
-        if any(pattern in message_lower for pattern in [r'\d+\s*ya?rd', r'\d+yd']):
-            return 'skip_hire', 'skip_size_mentioned'
-        
-        # 5. CONTEXT-BASED ROUTING (last resort before fallback)
-        if context:
-            # If we have a service already determined, continue with it
-            if context.get('service') or context.get('last_service'):
-                existing_service = context.get('service') or context.get('last_service')
-                return existing_service, 'continuing_conversation_by_context'
-        
-        # 6. DEFAULT FALLBACK - GRAB HANDLES EVERYTHING ELSE
-        return 'grab_hire', 'default_grab_handles_all'
-    
-    def _extract_materials(self, message: str) -> List[str]:
-        """Extract materials/items mentioned in message"""
-        message_lower = message.lower()
-        
-        all_materials = [
-            # Heavy materials
-            'soil', 'muck', 'rubble', 'concrete', 'brick', 'bricks', 'sand', 
-            'gravel', 'stone', 'stones', 'hardcore', 'mortar', 'cement',
-            'construction', 'building', 'demolition', 'asphalt', 'renovation',
-            
-            # Light materials  
-            'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 'wardrobe',
-            'appliances', 'fridge', 'freezer', 'washing machine', 'dishwasher',
-            'bags', 'clothes', 'books', 'boxes', 'household', 'office',
-            
-            # General waste
-            'garden', 'wood', 'metal', 'plastic', 'cardboard', 'general', 'mixed'
-        ]
-        
-        found_materials = []
-        for material in all_materials:
-            if material in message_lower:
-                found_materials.append(material)
-        
-        return found_materials
-    
-    def get_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
-        """Get current conversation state"""
-        return self._load_conversation_state(conversation_id)
-    
-    def clear_conversation_state(self, conversation_id: str) -> bool:
-        pass
-    
-    def get_agent_stats(self) -> Dict[str, Any]:
-        """Get statistics about agent usage"""
-        agent_usage = {}
-        total_messages = 0
-        
-        global _GLOBAL_CONVERSATION_STATES
-        
-        for state in _GLOBAL_CONVERSATION_STATES.values():
-            for entry in state.get('messages', []):
-                agent = entry.get('agent_used', 'unknown')
-                agent_usage[agent] = agent_usage.get(agent, 0) + 1
-                total_messages += 1
-        
-        return {
-            "total_messages_processed": total_messages,
-            "agent_usage": agent_usage,
-            "active_conversations": len(_GLOBAL_CONVERSATION_STATES)
-        }
+    """Orchestrates customer interactions with AUTOMATED BOOKING FLOW"""
+    
+    def __init__(self, llm, agents: Dict[str, Any], storage_backend=None):
+        self.llm = llm
+        self.agents = agents
+        self.storage = storage_backend or {}
+        global _GLOBAL_CONVERSATION_STATES
+        self.conversation_states = _GLOBAL_CONVERSATION_STATES
+        
+        print("✅ AgentOrchestrator initialized with AUTOMATED BOOKING FLOW")
+        print(f"✅ Available agents: {list(agents.keys())}")
+    
+    def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
+        """Process message with AUTOMATED booking workflow progression"""
+        
+        print(f"\n🎯 ORCHESTRATOR: Processing message for {conversation_id}")
+        print(f"📝 Message: {message}")
+        
+        try:
+            # Load conversation state
+            conversation_state = self._load_conversation_state(conversation_id)
+            
+            # Extract and update state
+            self._extract_and_update_state(message, conversation_state)
+            
+            # Merge with incoming context
+            if context:
+                conversation_state.update(context)
+            
+            print(f"🔄 Current State: {conversation_state}")
+            
+            # AUTOMATED WORKFLOW PROGRESSION
+            workflow_result = self._execute_automated_workflow(message, conversation_state)
+            
+            if workflow_result['auto_handled']:
+                # Save state and return automated response
+                self._save_conversation_state(conversation_id, conversation_state, message, workflow_result['response'], workflow_result['agent_used'])
+                return {
+                    "success": True,
+                    "response": workflow_result['response'],
+                    "agent_used": workflow_result['agent_used'],
+                    "conversation_state": conversation_state,
+                    "workflow_stage": workflow_result['stage'],
+                    "conversation_id": conversation_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            # Fallback to regular agent routing if automation didn't handle it
+            agent_choice, routing_reason = self._determine_agent(message, conversation_state)
+            agent = self.agents.get(agent_choice)
+            
+            response = agent.process_message(message, conversation_state)
+            
+            # Check if we can auto-progress after agent response
+            post_agent_workflow = self._check_post_agent_progression(conversation_state, response)
+            if post_agent_workflow['should_progress']:
+                response = post_agent_workflow['enhanced_response']
+            
+            self._save_conversation_state(conversation_id, conversation_state, message, response, agent_choice)
+            
+            return {
+                "success": True,
+                "response": response,
+                "agent_used": agent_choice,
+                "conversation_state": conversation_state,
+                "conversation_id": conversation_id,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            print(f"❌ Orchestrator Error: {str(e)}")
+            return {
+                "success": False,
+                "response": "I'll help you with that. What's your postcode and what type of waste do you need collected?",
+                "error": str(e),
+                "agent_used": "fallback",
+                "conversation_id": conversation_id
+            }
+    
+    def _execute_automated_workflow(self, message: str, state: Dict[str, Any]) -> Dict[str, Any]:
+        """AUTOMATED WORKFLOW - handles complete booking flow without repeat questions"""
+        
+        message_lower = message.lower()
+        
+        # Check what stage we're at
+        current_stage = state.get('workflow_stage', 'initial')
+        
+        print(f"🔄 WORKFLOW STAGE: {current_stage}")
+        
+        # STAGE 1: INITIAL PRICING (if we have enough info)
+        if current_stage == 'initial' and self._has_pricing_requirements(state):
+            print("🔄 AUTO-EXECUTING: Initial pricing")
+            
+            # Determine service automatically
+            service = self._determine_service_from_state(state)
+            pricing_result = self._auto_get_pricing(state, service)
+            
+            if pricing_result['success']:
+                state['workflow_stage'] = 'pricing_complete'
+                state['pricing_data'] = pricing_result
+                state['service'] = service
+                
+                # Immediately progress to booking confirmation
+                return self._auto_confirm_booking(state, pricing_result)
+            else:
+                return {'auto_handled': False}
+        
+        # STAGE 2: BOOKING CONFIRMATION (if customer confirms or provides details)
+        elif current_stage == 'pricing_complete' and self._customer_wants_to_proceed(message):
+            print("🔄 AUTO-EXECUTING: Booking confirmation")
+            
+            if self._has_booking_requirements(state):
+                booking_result = self._auto_create_booking(state)
+                if booking_result['success']:
+                    state['workflow_stage'] = 'booking_confirmed'
+                    state['booking_data'] = booking_result
+                    
+                    # Immediately call supplier and send payment
+                    return self._auto_complete_booking_flow(state, booking_result)
+                else:
+                    return {'auto_handled': False}
+            else:
+                return self._request_missing_booking_info(state)
+        
+        # STAGE 3: PAYMENT CONFIRMATION
+        elif current_stage == 'booking_confirmed' and ('pay' in message_lower or 'payment' in message_lower):
+            print("🔄 AUTO-EXECUTING: Payment processing")
+            return self._auto_send_payment_link(state)
+        
+        # AUTO-PROGRESSION: If we have all info but stuck in initial, progress automatically
+        elif current_stage == 'initial' and self._has_complete_booking_info(state):
+            print("🔄 AUTO-PROGRESSION: Complete info available, executing full flow")
+            return self._execute_full_booking_flow(state)
+        
+        return {'auto_handled': False}
+    
+    def _has_pricing_requirements(self, state: Dict[str, Any]) -> bool:
+        """Check if we have minimum info for pricing"""
+        postcode = state.get('postcode') or state.get('extracted_info', {}).get('postcode')
+        waste_type = state.get('waste_type') or state.get('extracted_info', {}).get('waste_type')
+        
+        return bool(postcode and waste_type)
+    
+    def _has_booking_requirements(self, state: Dict[str, Any]) -> bool:
+        """Check if we have minimum info for booking"""
+        extracted = state.get('extracted_info', {})
+        
+        name = extracted.get('name') or state.get('name')
+        phone = extracted.get('phone') or state.get('phone')
+        postcode = extracted.get('postcode') or state.get('postcode')
+        
+        return bool(name and phone and postcode)
+    
+    def _has_complete_booking_info(self, state: Dict[str, Any]) -> bool:
+        """Check if we have everything needed for complete booking"""
+        return (self._has_pricing_requirements(state) and 
+                self._has_booking_requirements(state))
+    
+    def _customer_wants_to_proceed(self, message: str) -> bool:
+        """Check if customer wants to proceed with booking"""
+        proceed_keywords = [
+            'yes', 'yeah', 'ok', 'okay', 'sure', 'go ahead', 'book it', 
+            'proceed', 'confirm', 'arrange', 'schedule', 'want it'
+        ]
+        message_lower = message.lower()
+        return any(keyword in message_lower for keyword in proceed_keywords)
+    
+    def _determine_service_from_state(self, state: Dict[str, Any]) -> str:
+        """Determine service type from extracted info"""
+        waste_type = (state.get('waste_type', '') + ' ' + 
+                     state.get('extracted_info', {}).get('waste_type', '')).lower()
+        
+        # Heavy materials = grab
+        if any(material in waste_type for material in ['soil', 'muck', 'rubble', 'concrete', 'brick']):
+            return 'grab'
+        
+        # Light items = mav
+        if any(item in waste_type for item in ['furniture', 'sofa', 'bags', 'appliances']):
+            return 'mav'
+        
+        # Default = skip
+        return 'skip'
+    
+    def _auto_get_pricing(self, state: Dict[str, Any], service: str) -> Dict[str, Any]:
+        """Automatically get pricing without asking questions"""
+        
+        try:
+            from tools.smp_api_tool import SMPAPITool
+            
+            smp_tool = SMPAPITool()
+            
+            # Extract required data
+            postcode = state.get('postcode') or state.get('extracted_info', {}).get('postcode')
+            size = state.get('size') or '8yd'  # Default size
+            
+            print(f"🔄 AUTO-PRICING: service={service}, postcode={postcode}, size={size}")
+            
+            result = smp_tool._run(
+                action="get_pricing",
+                postcode=postcode,
+                service=service,
+                type=size
+            )
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Auto-pricing failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _auto_confirm_booking(self, state: Dict[str, Any], pricing_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Auto-confirm booking with pricing info"""
+        
+        price = pricing_result.get('price', 'Contact for pricing')
+        service = state.get('service', 'waste collection')
+        postcode = state.get('postcode', '')
+        
+        response = f"""Perfect! I've got you a quote:
+
+💰 **Price: {price}**
+📍 **Area: {postcode}**
+🚛 **Service: {service.title()}**
+
+Would you like to book this? I just need your name and phone number to confirm."""
+        
+        return {
+            'auto_handled': True,
+            'response': response,
+            'agent_used': 'orchestrator_auto_pricing',
+            'stage': 'pricing_complete'
+        }
+    
+    def _auto_create_booking(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Automatically create booking"""
+        
+        try:
+            from tools.smp_api_tool import SMPAPITool
+            
+            smp_tool = SMPAPITool()
+            extracted = state.get('extracted_info', {})
+            pricing_data = state.get('pricing_data', {})
+            
+            booking_params = {
+                'postcode': state.get('postcode'),
+                'service': state.get('service'),
+                'type': state.get('size') or '8yd',
+                'firstName': extracted.get('name') or state.get('name'),
+                'phone': extracted.get('phone') or state.get('phone'),
+                'booking_ref': pricing_data.get('booking_ref'),
+                'emailAddress': extracted.get('email', ''),
+                'lastName': '',
+                'date': '',
+                'time': ''
+            }
+            
+            print(f"🔄 AUTO-BOOKING: {booking_params}")
+            
+            result = smp_tool._run(action="create_booking_quote", **booking_params)
+            return result
+            
+        except Exception as e:
+            print(f"❌ Auto-booking failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _auto_complete_booking_flow(self, state: Dict[str, Any], booking_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Complete the full booking flow - call supplier AND send payment"""
+        
+        try:
+            # Call supplier
+            supplier_result = self._auto_call_supplier(state, booking_result)
+            
+            # Send payment link
+            payment_result = self._auto_send_payment_link(state, booking_result)
+            
+            customer_name = state.get('extracted_info', {}).get('name') or state.get('name', 'Customer')
+            phone = state.get('extracted_info', {}).get('phone') or state.get('phone', '')
+            booking_ref = booking_result.get('booking_ref', '')
+            price = booking_result.get('final_price', '')
+            
+            response = f"""✅ **Booking Confirmed!**
+
+👤 **Customer:** {customer_name}
+📞 **Phone:** {phone}
+📋 **Reference:** {booking_ref}
+💰 **Total:** {price}
+
+✅ **Supplier has been notified**
+📱 **Payment link sent to your phone**
+🚛 **Collection will be arranged**
+
+Thank you for choosing WasteKing!"""
+            
+            # Update state
+            state['workflow_stage'] = 'complete'
+            state['supplier_called'] = supplier_result.get('success', False)
+            state['payment_sent'] = payment_result.get('success', False)
+            
+            return {
+                'auto_handled': True,
+                'response': response,
+                'agent_used': 'orchestrator_auto_complete',
+                'stage': 'complete'
+            }
+            
+        except Exception as e:
+            print(f"❌ Auto-completion failed: {e}")
+            return {
+                'auto_handled': True,
+                'response': "Booking created! We'll contact you shortly to arrange collection and payment.",
+                'agent_used': 'orchestrator_fallback',
+                'stage': 'booking_confirmed'
+            }
+    
+    def _auto_call_supplier(self, state: Dict[str, Any], booking_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Automatically call supplier"""
+        
+        try:
+            from tools.smp_api_tool import SMPAPITool
+            
+            smp_tool = SMPAPITool()
+            pricing_data = state.get('pricing_data', {})
+            
+            supplier_phone = pricing_data.get('real_supplier_phone', '+447823656907')
+            supplier_name = pricing_data.get('supplier_name', 'Local Supplier')
+            booking_ref = booking_result.get('booking_ref', '')
+            customer_name = state.get('extracted_info', {}).get('name') or state.get('name', '')
+            
+            call_message = f"New booking from WasteKing: {customer_name}, Reference: {booking_ref}"
+            
+            result = smp_tool._run(
+                action="call_supplier",
+                supplier_phone=supplier_phone,
+                supplier_name=supplier_name,
+                booking_ref=booking_ref,
+                message=call_message,
+                customer_name=customer_name,
+                customer_phone=state.get('phone', ''),
+                service=state.get('service', ''),
+                postcode=state.get('postcode', ''),
+                price=booking_result.get('final_price', '')
+            )
+            
+            print(f"🔄 SUPPLIER CALL RESULT: {result}")
+            return result
+            
+        except Exception as e:
+            print(f"❌ Supplier call failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _auto_send_payment_link(self, state: Dict[str, Any], booking_result: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Automatically send payment link"""
+        
+        try:
+            from tools.smp_api_tool import SMPAPITool
+            
+            smp_tool = SMPAPITool()
+            
+            if booking_result:
+                booking_ref = booking_result.get('booking_ref', '')
+                price = booking_result.get('final_price', '1')
+            else:
+                booking_data = state.get('booking_data', {})
+                booking_ref = booking_data.get('booking_ref', '')
+                price = booking_data.get('final_price', '1')
+            
+            customer_phone = state.get('extracted_info', {}).get('phone') or state.get('phone', '')
+            
+            result = smp_tool._run(
+                action="take_payment",
+                customer_phone=customer_phone,
+                quote_id=booking_ref,
+                amount=price,
+                call_sid="orchestrator_auto"
+            )
+            
+            print(f"🔄 PAYMENT LINK RESULT: {result}")
+            return result
+            
+        except Exception as e:
+            print(f"❌ Payment link failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _execute_full_booking_flow(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute complete booking flow when all info is available"""
+        
+        print("🔄 EXECUTING FULL BOOKING FLOW")
+        
+        # Step 1: Get pricing
+        service = self._determine_service_from_state(state)
+        pricing_result = self._auto_get_pricing(state, service)
+        
+        if not pricing_result.get('success'):
+            return {'auto_handled': False}
+        
+        state['pricing_data'] = pricing_result
+        state['service'] = service
+        
+        # Step 2: Create booking
+        booking_result = self._auto_create_booking(state)
+        
+        if not booking_result.get('success'):
+            return {'auto_handled': False}
+        
+        state['booking_data'] = booking_result
+        
+        # Step 3: Complete flow (call supplier + send payment)
+        return self._auto_complete_booking_flow(state, booking_result)
+    
+    def _request_missing_booking_info(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Request missing information for booking"""
+        
+        extracted = state.get('extracted_info', {})
+        missing = []
+        
+        if not (extracted.get('name') or state.get('name')):
+            missing.append('name')
+        if not (extracted.get('phone') or state.get('phone')):
+            missing.append('phone number')
+        
+        if missing:
+            response = f"To complete your booking, I need your {' and '.join(missing)}."
+        else:
+            response = "Perfect! Let me confirm your booking now."
+        
+        return {
+            'auto_handled': True,
+            'response': response,
+            'agent_used': 'orchestrator_missing_info',
+            'stage': 'awaiting_info'
+        }
+    
+    def _check_post_agent_progression(self, state: Dict[str, Any], response: str) -> Dict[str, Any]:
+        """Check if we can auto-progress after agent response"""
+        
+        # If agent got pricing, auto-progress to booking confirmation
+        if 'price' in response.lower() and '£' in response and state.get('workflow_stage') != 'pricing_complete':
+            state['workflow_stage'] = 'pricing_complete'
+            
+            enhanced_response = response + "\n\nWould you like to book this? I just need to confirm your details."
+            
+            return {
+                'should_progress': True,
+                'enhanced_response': enhanced_response
+            }
+        
+        return {'should_progress': False}
+    
+    # [Previous state management methods remain the same...]
+    def _load_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
+        """Load conversation state from storage"""
+        
+        global _GLOBAL_CONVERSATION_STATES
+        if conversation_id in _GLOBAL_CONVERSATION_STATES:
+            print(f"📁 Loaded state from GLOBAL storage for {conversation_id}")
+            state = _GLOBAL_CONVERSATION_STATES[conversation_id].copy()
+            self.conversation_states[conversation_id] = state.copy()
+            return state
+        
+        if conversation_id in self.conversation_states:
+            print(f"📁 Loaded state from memory for {conversation_id}")
+            state = self.conversation_states[conversation_id].copy()
+            _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
+            return state
+        
+        print(f"📁 No existing state for {conversation_id}, creating new")
+        default_state = {
+            'conversation_id': conversation_id,
+            'created_at': datetime.now().isoformat(),
+            'messages': [],
+            'extracted_info': {},
+            'workflow_stage': 'initial'
+        }
+        
+        return default_state
+    
+    def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
+        """Extract key information from message and update state"""
+        
+        message_lower = message.lower()
+        extracted = state.get('extracted_info', {})
+        
+        # Extract postcode
+        postcode_patterns = [
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',
+            r'\b(LS\d{4})\b',
+            r'\b([A-Z]{1,2}\d{1,4})\b'
+        ]
+        
+        for pattern in postcode_patterns:
+            postcode_match = re.search(pattern, message.upper())
+            if postcode_match:
+                extracted['postcode'] = postcode_match.group(1).replace(' ', '')
+                state['postcode'] = extracted['postcode']
+                print(f"✅ FOUND POSTCODE: {extracted['postcode']}")
+                break
+        
+        # Extract phone number
+        phone_patterns = [
+            r'\b(07\d{9})\b',
+            r'\b(0\d{10})\b'
+        ]
+        for pattern in phone_patterns:
+            phone_match = re.search(pattern, message)
+            if phone_match:
+                extracted['phone'] = phone_match.group(1)
+                state['phone'] = extracted['phone']
+                print(f"✅ FOUND PHONE: {extracted['phone']}")
+                break
+        
+        # Extract name
+        name_patterns = [
+            r'\bname\s+is\s+([A-Z][a-z]+)\b',
+            r'\bmy\s+name\s+is\s+([A-Z][a-z]+)\b',
+            r'\bi\s+am\s+([A-Z][a-z]+)\b',
+            r'\b([A-Z][a-z]+)\s+here\b'
+        ]
+        
+        for pattern in name_patterns:
+            name_match = re.search(pattern, message)
+            if name_match:
+                extracted['name'] = name_match.group(1)
+                state['name'] = extracted['name']
+                print(f"✅ FOUND NAME: {extracted['name']}")
+                break
+        
+        # Extract waste types
+        waste_keywords = [
+            'brick', 'bricks', 'rubble', 'concrete', 'soil', 'muck', 'sand', 'gravel',
+            'furniture', 'sofa', 'construction', 'building', 'demolition', 'garden',
+            'household', 'general', 'mixed', 'renovation', 'clearance', 'bags'
+        ]
+        
+        found_waste = []
+        for keyword in waste_keywords:
+            if keyword in message_lower:
+                found_waste.append(keyword)
+        
+        if found_waste:
+            existing_waste = extracted.get('waste_type', '')
+            all_waste = list(set(existing_waste.split(', ') + found_waste)) if existing_waste else found_waste
+            extracted['waste_type'] = ', '.join([w for w in all_waste if w])
+            state['waste_type'] = extracted['waste_type']
+            print(f"✅ FOUND WASTE: {extracted['waste_type']}")
+        
+        state['extracted_info'] = extracted
+    
+    def _save_conversation_state(self, conversation_id: str, state: Dict[str, Any], 
+                               message: str, response: str, agent_used: str):
+        """Save conversation state to storage"""
+        
+        if 'messages' not in state:
+            state['messages'] = []
+        
+        state['messages'].append({
+            "timestamp": datetime.now().isoformat(),
+            "customer_message": message,
+            "agent_response": response,
+            "agent_used": agent_used
+        })
+        
+        if len(state['messages']) > 20:
+            state['messages'] = state['messages'][-20:]
+        
+        state['last_updated'] = datetime.now().isoformat()
+        
+        global _GLOBAL_CONVERSATION_STATES
+        self.conversation_states[conversation_id] = state.copy()
+        _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
+        
+        print(f"💾 Saved state for {conversation_id}")
+    
+    def _determine_agent(self, message: str, context: Dict = None) -> tuple:
+        """Determine which agent should handle this message"""
+        
+        message_lower = message.lower()
+        
+        if any(phrase in message_lower for phrase in ['man and van', 'man & van', 'mav']):
+            return 'mav', 'explicit_mav_request'
+        
+        if any(phrase in message_lower for phrase in ['skip', 'skip hire', 'container']):
+            return 'skip_hire', 'explicit_skip_request'
+        
+        if any(phrase in message_lower for phrase in ['grab', 'grab hire', 'lorry']):
+            return 'grab_hire', 'explicit_grab_request'
+        
+        # Material-based routing
+        heavy_materials = ['soil', 'muck', 'rubble', 'concrete', 'brick']
+        if any(material in message_lower for material in heavy_materials):
+            return 'grab_hire', 'heavy_materials_detected'
+        
+        light_items = ['furniture', 'sofa', 'chair', 'bags', 'appliances']
+        if any(item in message_lower for item in light_items):
+            return 'mav', 'light_items_suitable_for_mav'
+        
+        return 'grab_hire', 'default_grab_handles_all'
+    
+    def get_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
+        """Get current conversation state"""
+        return self._load_conversation_state(conversation_id)
+    
+    def get_agent_stats(self) -> Dict[str, Any]:
+        """Get statistics about agent usage"""
+        agent_usage = {}
+        total_messages = 0
+        
+        global _GLOBAL_CONVERSATION_STATES
+        
+        for state in _GLOBAL_CONVERSATION_STATES.values():
+            for entry in state.get('messages', []):
+                agent = entry.get('agent_used', 'unknown')
+                agent_usage[agent] = agent_usage.get(agent, 0) + 1
+                total_messages += 1
+        
+        return {
+            "total_messages_processed": total_messages,
+            "agent_usage": agent_usage,
+            "active_conversations": len(_GLOBAL_CONVERSATION_STATES)
+        }
