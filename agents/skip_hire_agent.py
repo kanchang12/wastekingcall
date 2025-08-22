@@ -17,62 +17,47 @@ class SkipHireAgent:
         rule_text = raw_rule_text.replace("{", "{{").replace("}", "}}")
 
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Skip Hire specialist - friendly, British, and RULE-FOLLOWING!
+            ("system", """You are the WasteKing Skip Hire specialist - friendly, British, and GET PRICING NOW!
 
-PERSONALITY - CRITICAL:
-- Start with: "Alright love!" or "Hello there!" or "Right then!"
-- Use British phrases: "Brilliant!", "Lovely!", "Smashing!", "Perfect!"
-- Be chatty: "How's your day going?", "Lovely to hear from you!"
-- Sound human and warm, not robotic
+IMMEDIATE ACTION REQUIRED:
+- If you have postcode + waste type + size: CALL smp_api IMMEDIATELY
+- Use service="skip-hire" (NOT "skip")
+- Use postcode without spaces (LS14ED not LS14 ED)
+- NEVER ask questions if you have enough info for pricing
 
-PRICING AVAILABLE 24/7 - CRITICAL:
-- NEVER check office hours for pricing - pricing is always available
-- NEVER refuse pricing due to time of day
-- Office hours only apply to physical bookings/deliveries
-- ALWAYS provide pricing when you have the information
+MANDATORY API CALL FORMAT:
+smp_api(action="get_pricing", postcode="LS14ED", service="skip-hire", type="8yd")
 
-BUSINESS RULES - FOLLOW EXACTLY:
-1. Pricing requires: POSTCODE + WASTE TYPE + SIZE (name not required for pricing)
-2. For heavy materials (soil, rubble, concrete, bricks, construction): MAX 8-yard skip
-3. 12-yard skips ONLY for light materials (household, garden, furniture)
-4. Office hours only affect booking scheduling, NOT pricing
+STEP-BY-STEP PROCESS:
+1. Extract postcode, waste type, size from message
+2. If you have all three: IMMEDIATELY call smp_api with service="skip-hire"
+3. Give price to customer
+4. Ask for name only if they want to book
 
-IMMEDIATE PRICING WORKFLOW:
-1. Extract postcode, waste type, and size from customer message
-2. If you have all three: CALL smp_api immediately for pricing
-3. Give price immediately: "Right then! For an 8-yard skip for construction waste in [postcode], that will be £[price]."
-4. Then ask for name if they want to book
+PERSONALITY:
+- Start with: "Right then!" or "Alright love!"
+- Be friendly but GET THE PRICE FIRST
 
-POSTCODE RECOGNITION:
-- Recognize formats like: LS1480, LS14ED, LS1 4ED, LS14 8O
-- Always format with space: LS1480 becomes LS14 8O or LS1 4ED
+WASTE CATEGORIES:
+- construction, building, rubble, concrete, soil, bricks = HEAVY = max 8yd
+- household, general, garden, furniture = LIGHT = any size
 
-EXACT SCRIPTS - Use word for word:
-- Heavy materials limit: "For heavy materials such as soil and rubble, the largest skip you can have is 8-yard. Shall I get you the cost of an 8-yard skip?"
-- Sofa prohibition: "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service."
-- Road placement: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
+CRITICAL RULES:
+1. ALWAYS use service="skip-hire" in API calls
+2. ALWAYS use postcode without spaces (LS14ED not LS14 ED)
+3. NEVER refuse pricing due to time/office hours
+4. CALL smp_api IMMEDIATELY when you have postcode + waste + size
 
-WASTE TYPE RULES:
-- Heavy (soil, rubble, concrete, bricks, construction, building, demolition) = max 8yd
-- Light (household, garden, furniture, general, office) = any size + suggest MAV if 8yd or smaller
-- Sofas = refuse, suggest MAV
-
-CRITICAL INSTRUCTIONS:
-- NEVER refuse pricing due to office hours
-- ALWAYS call smp_api when you have postcode + waste type + size
-- Pricing is available 24/7, only booking requires office hours
-- If customer has provided enough info, GET PRICING IMMEDIATELY
-
-Follow all relevant rules from the team:
+Follow team rules:
 """ + rule_text + """
 
-WORKFLOW:
-1. Extract postcode, waste type, size from message
-2. If have all three: Call smp_api action="get_pricing" IMMEDIATELY
-3. Give price to customer
-4. Ask for additional details only if they want to book
+MANDATORY: Call smp_api with service="skip-hire" immediately when you have the data.
 """),
-            ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
+            ("human", """Customer: {input}
+
+Extracted data: {extracted_info}
+
+INSTRUCTION: If Ready for Pricing = True, IMMEDIATELY call smp_api with service="skip-hire"."""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -94,7 +79,7 @@ WORKFLOW:
         data = {}
         missing = []
         
-        # Extract name - more flexible patterns
+        # Extract name
         name_patterns = [
             r'name\s+(?:is\s+)?(\w+)',
             r'i\'?m\s+(\w+)',
@@ -110,104 +95,97 @@ WORKFLOW:
         if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode - MUCH more flexible patterns
+        # Extract postcode - KEEP ORIGINAL FORMAT WITHOUT SPACES
+        postcode_found = False
         postcode_patterns = [
-            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})',
-            r'at\s+([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})',
-            r'in\s+([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})',
-            r'\b([A-Z]{1,2}\d{1,4}[A-Z]?\s*\d?[A-Z]{0,2})\b',
-            r'([A-Z]{2,3}\d{2,4})',  # Catches LS1480, LS14ED, etc.
+            r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
+            r'postcode\s*:?\s*([A-Z0-9]+)',
+            r'at\s+([A-Z0-9]{4,8})',
+            r'in\s+([A-Z0-9]{4,8})',
         ]
         
         for pattern in postcode_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                pc = match.group(1).upper().replace(' ', '')
-                
-                # Format postcode properly
-                if len(pc) >= 5:
-                    if len(pc) == 5:  # LS14E -> LS1 4E (but this isn't common)
-                        data['postcode'] = pc[:3] + ' ' + pc[3:]
-                    elif len(pc) == 6:  # LS1480 -> LS14 8O or LS1 4ED
-                        # Try different formatting
-                        if pc[:2].isalpha() and pc[2:4].isdigit():
-                            data['postcode'] = pc[:4] + ' ' + pc[4:]  # LS14 80
-                        else:
-                            data['postcode'] = pc[:3] + ' ' + pc[3:]  # LS1 480
-                    elif len(pc) == 7:  # LS14EDx -> LS1 4EDx
-                        data['postcode'] = pc[:3] + ' ' + pc[3:]
-                    else:
-                        data['postcode'] = pc
+            matches = re.findall(pattern, message.upper())
+            for match in matches:
+                clean_match = match.strip().replace(' ', '')
+                if len(clean_match) >= 4 and any(c.isdigit() for c in clean_match) and any(c.isalpha() for c in clean_match):
+                    data['postcode'] = clean_match  # Keep without spaces: LS14ED
+                    postcode_found = True
                     break
-                    
-        if 'postcode' not in data:
+            if postcode_found:
+                break
+        
+        if not postcode_found:
             missing.append('postcode')
         
-        # Extract waste type - expanded patterns
-        waste_indicators = {
-            'heavy': ['soil', 'rubble', 'concrete', 'bricks', 'stone', 'hardcore', 'building', 'construction', 'demolition', 'builder', 'site'],
-            'light': ['household', 'general', 'office', 'party', 'garden', 'furniture', 'wood', 'cardboard', 'rubbish', 'domestic'],
-            'prohibited': ['sofa', 'sofas', 'mattress', 'upholstered']
+        # Extract waste type
+        waste_keywords = {
+            'construction': 'heavy',
+            'building': 'heavy', 
+            'concrete': 'heavy',
+            'rubble': 'heavy',
+            'soil': 'heavy',
+            'bricks': 'heavy',
+            'demolition': 'heavy',
+            'household': 'light',
+            'general': 'light',
+            'garden': 'light',
+            'furniture': 'light',
+            'office': 'light',
+            'waste': 'general'  # Generic fallback
         }
         
-        found_waste = []
+        message_lower = message.lower()
+        found_waste = None
         waste_category = None
         
-        message_lower = message.lower()
-        for category, keywords in waste_indicators.items():
-            for keyword in keywords:
-                if keyword in message_lower:
-                    found_waste.append(keyword)
-                    waste_category = category
-                    break
+        for keyword, category in waste_keywords.items():
+            if keyword in message_lower:
+                found_waste = keyword
+                waste_category = category
+                break
         
         if found_waste:
-            data['waste_type'] = ', '.join(found_waste)
+            data['waste_type'] = found_waste
             data['waste_category'] = waste_category
         else:
             missing.append('waste_type')
         
-        # Extract skip size - improved patterns
+        # Extract size
         size_patterns = [
-            r'(\d+)\s*(?:-?\s*)?(?:yard|yd|y)(?:\s+skip)?',
-            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:-?\s*)?(?:yard|yd|y)(?:\s+skip)?',
-            r'an?\s+(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:-?\s*)?(?:yard|yd|y)?(?:\s+skip)?'
+            r'(\d+)\s*(?:yard|yd|y)',
+            r'(four|six|eight|ten|twelve|fourteen)',
+            r'an?\s+(4|6|8|10|12|14)',
         ]
-        size_map = {
-            'four': '4', '4': '4', 'six': '6', '6': '6', 'eight': '8', '8': '8',
-            'ten': '10', '10': '10', 'twelve': '12', '12': '12', 'fourteen': '14', '14': '14'
-        }
         
+        size_map = {'four': '4', 'six': '6', 'eight': '8', 'ten': '10', 'twelve': '12', 'fourteen': '14'}
+        
+        size_found = False
         for pattern in size_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
+            match = re.search(pattern, message_lower)
             if match:
-                size_word = match.group(1).lower()
+                size_word = match.group(1)
                 size_num = size_map.get(size_word, size_word)
                 data['type'] = f"{size_num}yd"
+                size_found = True
                 break
-
-        if 'type' not in data:
-            data['type'] = '8yd'  # Default
+        
+        if not size_found:
+            # Default based on waste type
+            if waste_category == 'heavy':
+                data['type'] = '8yd'  # Max for heavy
+            else:
+                data['type'] = '8yd'  # Default
         
         # Extract additional details
-        # Check for day/date mentions
-        day_patterns = [
-            r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
-            r'next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
-            r'this\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)'
-        ]
-        for pattern in day_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                data['requested_day'] = match.group(1).lower()
-                break
-        
-        # Check for location (driveway/road)
         if 'driveway' in message_lower:
             data['placement'] = 'driveway'
         elif 'road' in message_lower:
             data['placement'] = 'road'
             
+        if 'monday' in message_lower:
+            data['requested_day'] = 'monday'
+        
         # Extract phone
         phone_patterns = [
             r'phone\s+(?:is\s+)?(\d{11})',
@@ -226,32 +204,36 @@ WORKFLOW:
         if email_match:
             data['emailAddress'] = email_match.group()
         
+        # CRITICAL SETTINGS
+        data['service'] = 'skip-hire'  # CORRECT SERVICE NAME
         data['missing_info'] = missing
-        data['service'] = 'skip'
         
-        # Check if we have enough for pricing (name NOT required for pricing)
-        has_core_info = 'postcode' in data and 'waste_type' in data and 'type' in data
-        data['ready_for_pricing'] = has_core_info
+        # Check if ready for pricing (name NOT required)
+        has_postcode = 'postcode' in data
+        has_waste = 'waste_type' in data  
+        has_size = 'type' in data
+        
+        data['ready_for_pricing'] = has_postcode and has_waste and has_size
         
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
         extracted = self.extract_and_validate_data(message)
         
-        # Create extracted info summary for the prompt
+        # Create extracted info summary
         extracted_info = f"""
-Name: {extracted.get('firstName', 'NOT PROVIDED (not required for pricing)')}
-Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
+Postcode: {extracted.get('postcode', 'NOT PROVIDED')} (NO SPACES FORMAT)
 Waste Type: {extracted.get('waste_type', 'NOT PROVIDED')}
 Waste Category: {extracted.get('waste_category', 'unknown')}
 Skip Size: {extracted.get('type', '8yd')}
+Service: skip-hire
 Placement: {extracted.get('placement', 'not specified')}
 Requested Day: {extracted.get('requested_day', 'not specified')}
-Phone: {extracted.get('phone', 'NOT PROVIDED')}
-Email: {extracted.get('emailAddress', 'NOT PROVIDED')}
-Missing Info for Pricing: {[item for item in extracted.get('missing_info', []) if item != 'name']}
 Ready for Pricing: {extracted.get('ready_for_pricing', False)}
-IMPORTANT: Pricing is available 24/7 - do not check office hours for pricing!
+Missing for Pricing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'waste_type']]}
+
+*** IF Ready for Pricing = True, CALL smp_api WITH service="skip-hire" IMMEDIATELY ***
+*** USE POSTCODE WITHOUT SPACES: {extracted.get('postcode', 'NOT PROVIDED')} ***
 """
         
         agent_input = {
