@@ -90,51 +90,58 @@ class SMPAPITool(BaseTool):
             return None
 
     def _update_wasteking_booking(self, booking_ref, postcode, service, type_):
-        """Update booking"""
+        """Construct JSON with Python variables and send to Koyeb endpoint"""
         try:
+            url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/wasteking-confirm-booking"
             headers = {
-                "x-wasteking-request": self.access_token,
                 "Content-Type": "application/json"
             }
     
-            # Correct payload structure
             payload = {
-                "bookingRef": booking_ref,
-                "payload": {
-                    "postCode": postcode,
-                    "service": service,
-                    "type": type_
-                }
+                "type": "webhook",
+                "name": "create_booking_quote",
+                "description": "Create WasteKing booking quote with payment link, apply discounts and surcharges for extra items",
+                "disable_interruptions": False,
+                "force_pre_tool_speech": "auto",
+                "assignments": [],
+                "api_schema": {
+                    "url": url,
+                    "method": "POST",
+                    "path_params_schema": [],
+                    "query_params_schema": [],
+                    "request_body_schema": {
+                        "id": "body",
+                        "type": "object",
+                        "description": "Create booking quote with customer details, discounts, and surcharges",
+                        "properties": [
+                            {"id": "type", "type": "string", "required": True, "constant_value": type_},
+                            {"id": "postcode", "type": "string", "required": True, "constant_value": postcode},
+                            {"id": "service", "type": "string", "required": True, "constant_value": service},
+                            {"id": "booking_ref", "type": "string", "required": True, "constant_value": booking_ref}
+                        ]
+                    },
+                    "request_headers": [],
+                    "auth_connection": None
+                },
+                "response_timeout_secs": 30,
+                "dynamic_variables": {"dynamic_variable_placeholders": {}}
             }
     
-            update_url = f"{self.base_url}api/booking/update/"
+            self._log_with_timestamp(f"🔄 Sending Koyeb JSON payload: {json.dumps(payload, indent=2)}")
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
     
-            self._log_with_timestamp(
-                f"🔄 Updating booking {booking_ref} with payload: {json.dumps(payload, indent=2)}"
-            )
-            self._log_with_timestamp(f"🔄 Update URL: {update_url}")
-    
-            response = requests.post(
-                update_url,
-                headers=headers,
-                json=payload,
-                timeout=20,
-                verify=False
-            )
-    
-            self._log_with_timestamp(f"🔄 Update response status: {response.status_code}")
-            self._log_with_timestamp(f"🔄 Update response text: {response.text}")
+            self._log_with_timestamp(f"🔄 Response status: {response.status_code}")
+            self._log_with_timestamp(f"🔄 Response text: {response.text}")
     
             if response.status_code in [200, 201]:
-                self._log_with_timestamp(f"✅ Updated booking {booking_ref}")
                 return response.json()
             else:
-                self._log_with_timestamp(f"❌ Failed to update booking: {response.status_code}")
-                return None
+                return {"success": False, "error": f"Failed with status code {response.status_code}"}
     
         except Exception as e:
-            self._log_error(f"Failed to update booking {booking_ref}", e)
-            return None
+            self._log_error(f"Failed to send Koyeb JSON for booking {booking_ref}", e)
+            return {"success": False, "error": str(e)}
+
 
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
