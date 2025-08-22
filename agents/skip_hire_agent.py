@@ -41,20 +41,23 @@ Follow PDF rules above. Be direct."""),
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=10)
     
     def _load_pdf_rules(self) -> str:
-        """Load rules directly from data/rules/all_rules.pdf"""
+        """Load rules directly from data/rules/all rules.pdf"""
         try:
-            pdf_path = "data/rules/all_rules.pdf"
+            pdf_path = "data/rules/all rules.pdf"
+            print(f"🔧 SKIP AGENT: Loading PDF rules from: {pdf_path}")
             if os.path.exists(pdf_path):
                 with open(pdf_path, 'rb') as file:
                     pdf_reader = PyPDF2.PdfReader(file)
                     text = ""
                     for page in pdf_reader.pages:
                         text += page.extract_text()
+                print(f"🔧 SKIP AGENT: PDF rules loaded successfully ({len(text)} characters)")
                 return text
             else:
+                print(f"❌ SKIP AGENT: PDF rules not found at {pdf_path}")
                 return "PDF rules not found - using basic skip hire rules"
         except Exception as e:
-            print(f"Error loading PDF rules: {e}")
+            print(f"❌ SKIP AGENT: Error loading PDF rules: {e}")
             return "PDF rules not available - using basic skip hire rules"
     
     def process_message(self, message: str, context: Dict = None) -> str:
@@ -112,7 +115,10 @@ Ready for API: True
             **extracted_data
         }
         
+        print(f"🔧 SKIP AGENT: Executing agent with action: {action}")
+        print(f"🔧 SKIP AGENT: Tools available: {[tool.name for tool in self.tools]}")
         response = self.executor.invoke(agent_input)
+        print(f"🔧 SKIP AGENT: Agent execution completed successfully")
         return response["output"]
     
     def _extract_data_properly(self, message: str, context: Dict = None) -> Dict[str, Any]:
