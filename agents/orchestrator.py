@@ -401,12 +401,11 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         ]
         
         for pattern in postcode_patterns:
-            postcode_match = re.search(pattern, message.upper())
+            postcode_match = re.search(postcode_pattern, message.upper())
             if postcode_match:
-                # CLEAN POSTCODE FOR API: Remove spaces, uppercase
                 raw_postcode = postcode_match.group(1)
                 clean_postcode = raw_postcode.replace(' ', '').upper()
-                extracted['postcode'] = clean_postcode
+                extracted = {'postcode': clean_postcode}
                 print(f"✅ FOUND POSTCODE: '{raw_postcode}' → CLEANED: '{clean_postcode}' (for API)")
                 break
         
