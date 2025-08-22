@@ -30,6 +30,8 @@ Routing Rules:
 - If unclear, route to skip_hire as default
 
 Return JSON: {{"primary_agent": "agent_name", "reasoning": "explanation"}}
+
+You are taking way too much time asking same questions over and over and overwriting the data, you need to give the info in first time only. DOnt waste time and say I am looking into it
 """
         )
         
