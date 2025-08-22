@@ -211,7 +211,7 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": f"Booking quote failed: {str(e)}"}
     
-        def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
+    def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Send payment link to customer - Send actual data to Koyeb take_payment endpoint"""
         
