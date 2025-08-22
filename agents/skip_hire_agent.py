@@ -24,7 +24,7 @@ class SkipHireAgent:
 
 RULES FROM PDF KNOWLEDGE BASE:
 """ + rule_text + """
-
+Out side office calls, you will attend, never forward but try to make the sale get price, get booking link, given nothing else is stopping, make the sale
 CRITICAL WORKFLOW:
 1. If customer provides ALL info (postcode + waste + name + phone): IMMEDIATELY call create_booking_quote
 2. If just pricing info: Call get_pricing then ask to book
