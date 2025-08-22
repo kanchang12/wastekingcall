@@ -6,7 +6,6 @@ from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
 from utils.rules_processor import RulesProcessor
 
-# FIXED GrabHireAgent
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
@@ -18,13 +17,7 @@ class GrabHireAgent:
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and GET PRICING NOW!
 
-CRITICAL API PARAMETERS:
-- service: "grab"
-- type: "8yd" (default for grab)
-- postcode: "LS14ED" (no spaces)
-
-MANDATORY API CALL:
-smp_api(action="get_pricing", postcode="LS14ED", service="grab", type="8yd")
+CRITICAL: NEVER ASK FOR DATA ALREADY PROVIDED IN CONTEXT
 
 IMMEDIATE ACTION:
 - If you have postcode + material type: CALL smp_api IMMEDIATELY
@@ -35,9 +28,10 @@ PERSONALITY:
 - Get pricing first
 
 WORKFLOW:
-1. Extract postcode, material type from message
-2. CALL smp_api with service="grab" immediately
+1. Check context for postcode, material type 
+2. CALL smp_api with service="grab" immediately if you have data
 3. Give price
+4. ONLY ask for missing data if not in context
 
 MATERIAL RULES:
 - Heavy materials (soil, muck, rubble) = grab lorry ideal
@@ -46,155 +40,73 @@ MATERIAL RULES:
 Follow team rules:
 """ + rule_text + """
 
-CRITICAL: Call smp_api with service="grab" when you have postcode + material.
-"""),
+NEVER GIVE FAKE PRICES - only API prices!"""),
             ("human", """Customer: {input}
 
-Extracted data: {extracted_info}
+CONTEXT DATA (DON'T ASK FOR THIS AGAIN):
+Postcode: {postcode}
+Material type: {material_type}
+Name: {name}
+Phone: {phone}
 
-INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="grab"."""),
+INSTRUCTION: Use context data. Call smp_api if you have postcode + material. Don't repeat questions!"""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
-        self.agent = create_openai_functions_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=self.prompt
-        )
-        
-        self.executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
-            verbose=True,
-            max_iterations=5
-        )
-    
-    def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
-        """Extract customer data and check what's missing"""
-        data = {}
-        missing = []
-        
-        # Extract name
-        name_patterns = [
-            r'name\s+(?:is\s+)?(\w+)',
-            r'i\'?m\s+(\w+)',
-            r'my\s+name\s+is\s+(\w+)'
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                data['firstName'] = match.group(1).title()
-                break
-        if 'firstName' not in data:
-            missing.append('name')
-        
-        # Extract postcode - NO SPACES
-        postcode_found = False
-        postcode_patterns = [
-            r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
-            r'postcode\s*:?\s*([A-Z0-9]+)',
-            r'at\s+([A-Z0-9]{4,8})',
-            r'in\s+([A-Z0-9]{4,8})',
-        ]
-        
-        for pattern in postcode_patterns:
-            matches = re.findall(pattern, message.upper())
-            for match in matches:
-                clean_match = match.strip().replace(' ', '')
-                if len(clean_match) >= 4 and any(c.isdigit() for c in clean_match) and any(c.isalpha() for c in clean_match):
-                    data['postcode'] = clean_match  # LS14ED
-                    postcode_found = True
-                    break
-            if postcode_found:
-                break
-        
-        if not postcode_found:
-            missing.append('postcode')
-        
-        # Extract material type
-        material_keywords = {
-            'soil': 'heavy',
-            'muck': 'heavy',
-            'rubble': 'heavy',
-            'hardcore': 'heavy',
-            'sand': 'heavy',
-            'gravel': 'heavy',
-            'concrete': 'heavy',
-            'stone': 'heavy',
-            'household': 'light',
-            'general': 'light',
-            'office': 'light'
-        }
-        
-        message_lower = message.lower()
-        found_material = None
-        material_category = None
-        
-        for keyword, category in material_keywords.items():
-            if keyword in message_lower:
-                found_material = keyword
-                material_category = category
-                break
-        
-        if found_material:
-            data['material_type'] = found_material
-            data['material_category'] = material_category
-        else:
-            missing.append('material_type')
-        
-        # Extract phone
-        phone_patterns = [
-            r'phone\s+(?:is\s+)?(\d{11})',
-            r'mobile\s+(?:is\s+)?(\d{11})',
-            r'\b(\d{11})\b'
-        ]
-        for pattern in phone_patterns:
-            match = re.search(pattern, message)
-            if match:
-                data['phone'] = match.group(1)
-                break
-        
-        # Extract email
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        email_match = re.search(email_pattern, message)
-        if email_match:
-            data['emailAddress'] = email_match.group()
-        
-        data['type'] = '8yd'  # Default for grab
-        data['service'] = 'grab'  # CORRECT SERVICE
-        data['missing_info'] = missing
-        
-        # Ready for pricing check
-        has_postcode = 'postcode' in data
-        has_material = 'material_type' in data
-        data['ready_for_pricing'] = has_postcode and has_material
-        
-        return data
+        self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
+        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=5)
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        extracted = self.extract_and_validate_data(message)
+        # Get data from context first, then message
+        extracted = context.get('extracted_info', {}) if context else {}
         
-        extracted_info = f"""
-Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
-Material Type: {extracted.get('material_type', 'NOT PROVIDED')}
-Material Category: {extracted.get('material_category', 'unknown')}
-Service: grab
-Type: 8yd
-Ready for Pricing: {extracted.get('ready_for_pricing', False)}
-Missing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'material_type']]}
-
-*** API Parameters: postcode={extracted.get('postcode', 'NOT PROVIDED')}, service=grab, type=8yd ***
-"""
+        postcode = (context.get('postcode') if context else None) or extracted.get('postcode') or self._extract_postcode(message) or 'NOT PROVIDED'
+        material_type = (context.get('waste_type') if context else None) or extracted.get('waste_type') or self._extract_material(message) or 'NOT PROVIDED'
+        name = (context.get('name') if context else None) or extracted.get('name') or self._extract_name(message) or 'NOT PROVIDED'
+        phone = (context.get('phone') if context else None) or extracted.get('phone') or self._extract_phone(message) or 'NOT PROVIDED'
+        
+        print(f"🔧 GRAB HIRE AGENT:")
+        print(f"   📍 Postcode: {postcode}")
+        print(f"   🗑️ Material: {material_type}")
+        print(f"   👤 Name: {name}")
+        print(f"   📞 Phone: {phone}")
         
         agent_input = {
             "input": message,
-            "extracted_info": extracted_info
+            "postcode": postcode,
+            "material_type": material_type,
+            "name": name,
+            "phone": phone
         }
         
         if context:
-            for k, v in context.items():
-                agent_input[k] = v
-                
-        agent_input.update(extracted)
+            agent_input.update(context)
+        
         response = self.executor.invoke(agent_input)
         return response["output"]
+    
+    def _extract_postcode(self, message: str) -> str:
+        patterns = [r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})']
+        for pattern in patterns:
+            match = re.search(pattern, message.upper())
+            if match:
+                return match.group(1).replace(' ', '')
+        return ""
+    
+    def _extract_material(self, message: str) -> str:
+        materials = ['soil', 'muck', 'rubble', 'concrete', 'brick', 'sand', 'gravel', 'furniture', 'household', 'general']
+        found = [mat for mat in materials if mat in message.lower()]
+        return ', '.join(found) if found else ""
+    
+    def _extract_name(self, message: str) -> str:
+        patterns = [r'\bname\s+is\s+([A-Z][a-z]+)\b', r'\bi\s+am\s+([A-Z][a-z]+)\b']
+        for pattern in patterns:
+            match = re.search(pattern, message)
+            if match:
+                return match.group(1)
+        return ""
+    
+    def _extract_phone(self, message: str) -> str:
+        pattern = r'\b(07\d{9})\b'
+        match = re.search(pattern, message)
+        return match.group(1) if match else ""
