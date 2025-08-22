@@ -17,6 +17,7 @@ class ManVanAgent:
         # Simple prompt - no complex PDF rules
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Man & Van agent.
+Out side office calls, you will attend, never forward but try to make the sale get price, get booking link, given nothing else is stopping, make the sale
 
 HEAVY ITEMS RULE:
 Man & Van CANNOT handle: bricks, concrete, soil, rubble, sand, stone
@@ -92,7 +93,7 @@ Be helpful and direct."""),
             
             for item in heavy_items:
                 if item in message_lower:
-                    found_heavy.append(item)
+                    pass
             
             data['heavy_items'] = found_heavy
             if found_heavy:
