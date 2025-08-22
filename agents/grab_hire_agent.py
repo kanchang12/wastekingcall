@@ -6,68 +6,53 @@ from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
 from utils.rules_processor import RulesProcessor
 
+# FIXED GrabHireAgent
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
         self.rules_processor = RulesProcessor()
         rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        # Escape curly braces to prevent template variable conflicts
         rule_text = rule_text.replace("{", "{{").replace("}", "}}")
 
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and RULE-FOLLOWING!
+            ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and GET PRICING NOW!
 
-PERSONALITY - CRITICAL:
-- Start with: "Alright love!" or "Hello there!" or "Right then!" 
-- Use British phrases: "Brilliant!", "Lovely!", "Smashing!", "Perfect!"
-- Be chatty: "How's your day going?", "Lovely to hear from you!"
-- Sound human and warm, not robotic
+CRITICAL API PARAMETERS:
+- service: "grab"
+- type: "8yd" (default for grab)
+- postcode: "LS14ED" (no spaces)
 
-NEW WORKFLOW - FOLLOW EXACTLY:
-1. FIRST: Collect ALL info (name, postcode, material type, tonnage, access)
-2. SECOND: Give the price immediately using smp_api
-3. THIRD: Ask "Shall I book this for you now?"
-4. FOURTH: Handle any objections (price, timing, access)
-5. FIFTH: Complete the booking
+MANDATORY API CALL:
+smp_api(action="get_pricing", postcode="LS14ED", service="grab", type="8yd")
 
-BUSINESS RULES - FOLLOW EXACTLY:
-1. ALWAYS collect NAME, POSTCODE, MATERIAL TYPE before pricing
-2. Grab lorries ideal for: soil, muck, rubble, hardcore, sand, gravel
-3. Minimum 8-tonne loads, maximum 16-tonne
-4. Road access required for grab lorry
-5. Same day service available
+IMMEDIATE ACTION:
+- If you have postcode + material type: CALL smp_api IMMEDIATELY
+- Use service="grab" ALWAYS
 
-QUALIFICATION PROCESS:
-1. Extract ALL available info from the customer message first
-2. If you have name, postcode, and material type - GET PRICING IMMEDIATELY
-3. If missing any critical info, ask for it quickly then get pricing
-4. Always give the price before asking anything else
+PERSONALITY:
+- Start with: "Alright love!" or "Right then!"
+- Get pricing first
 
-PRICING FLOW:
-- Once you have the basics, call smp_api with: action="get_pricing", postcode=postcode, service="grab", type="8yd"
-- Give the price immediately: "Right then [name]! For grab lorry collection of [material] from [postcode], that will be £[price]."
-- Then ask: "Shall I book this for you now?"
+WORKFLOW:
+1. Extract postcode, material type from message
+2. CALL smp_api with service="grab" immediately
+3. Give price
 
 MATERIAL RULES:
-- Heavy materials (soil, muck, rubble, hardcore) equals grab lorry ideal
-- Light materials (household waste) equals suggest skip or MAV instead
-- Mixed loads equals check access and tonnage
+- Heavy materials (soil, muck, rubble) = grab lorry ideal
+- Light materials = suggest skip or MAV instead
 
-OBJECTION HANDLING:
-- If price objection: Explain tonnage capacity, same day service
-- If access objection: Confirm road access requirements
-- If timing objection: Offer alternatives
+Follow team rules:
+""" + rule_text + """
 
-RESPONSES:
-- Always confirm: "Grab lorry will collect directly from your location"
-- Check road access: "Can our grab lorry access your property from the road?"
-- Explain tonnage limits clearly
-- Give same day availability
-
-NEVER skip qualification questions. Always get pricing before asking to book.
+CRITICAL: Call smp_api with service="grab" when you have postcode + material.
 """),
-            ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
+            ("human", """Customer: {input}
+
+Extracted data: {extracted_info}
+
+INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="grab"."""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -81,7 +66,7 @@ NEVER skip qualification questions. Always get pricing before asking to book.
             agent=self.agent,
             tools=self.tools,
             verbose=True,
-            max_iterations=3
+            max_iterations=5
         )
     
     def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
@@ -103,71 +88,59 @@ NEVER skip qualification questions. Always get pricing before asking to book.
         if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode
+        # Extract postcode - NO SPACES
+        postcode_found = False
         postcode_patterns = [
-            r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
+            r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
+            r'postcode\s*:?\s*([A-Z0-9]+)',
+            r'at\s+([A-Z0-9]{4,8})',
+            r'in\s+([A-Z0-9]{4,8})',
         ]
+        
         for pattern in postcode_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                pc = match.group(1).upper()
-                if len(pc.replace(' ', '')) >= 5:
-                    if ' ' not in pc and len(pc) >= 6:
-                        data['postcode'] = pc[:-3] + ' ' + pc[-3:]
-                    else:
-                        data['postcode'] = pc
+            matches = re.findall(pattern, message.upper())
+            for match in matches:
+                clean_match = match.strip().replace(' ', '')
+                if len(clean_match) >= 4 and any(c.isdigit() for c in clean_match) and any(c.isalpha() for c in clean_match):
+                    data['postcode'] = clean_match  # LS14ED
+                    postcode_found = True
                     break
-        if 'postcode' not in data:
+            if postcode_found:
+                break
+        
+        if not postcode_found:
             missing.append('postcode')
         
         # Extract material type
-        material_indicators = {
-            'heavy': ['soil', 'muck', 'rubble', 'hardcore', 'sand', 'gravel', 'concrete', 'stone'],
-            'light': ['household', 'general', 'office', 'furniture', 'garden'],
-            'mixed': ['mixed', 'various', 'different']
+        material_keywords = {
+            'soil': 'heavy',
+            'muck': 'heavy',
+            'rubble': 'heavy',
+            'hardcore': 'heavy',
+            'sand': 'heavy',
+            'gravel': 'heavy',
+            'concrete': 'heavy',
+            'stone': 'heavy',
+            'household': 'light',
+            'general': 'light',
+            'office': 'light'
         }
         
-        found_material = []
+        message_lower = message.lower()
+        found_material = None
         material_category = None
         
-        message_lower = message.lower()
-        for category, keywords in material_indicators.items():
-            for keyword in keywords:
-                if keyword in message_lower:
-                    found_material.append(keyword)
-                    material_category = category
-                    break
+        for keyword, category in material_keywords.items():
+            if keyword in message_lower:
+                found_material = keyword
+                material_category = category
+                break
         
         if found_material:
-            data['material_type'] = ', '.join(found_material)
+            data['material_type'] = found_material
             data['material_category'] = material_category
         else:
             missing.append('material_type')
-        
-        # Extract tonnage if mentioned
-        tonnage_patterns = [
-            r'(\d+)\s*(?:ton|tonne)s?',
-            r'(eight|8|twelve|12|sixteen|16)\s*(?:ton|tonne)s?'
-        ]
-        tonnage_map = {
-            'eight': '8', '8': '8', 'twelve': '12', '12': '12', 'sixteen': '16', '16': '16'
-        }
-        
-        for pattern in tonnage_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                tonnage_word = match.group(1).lower()
-                tonnage_num = tonnage_map.get(tonnage_word, tonnage_word)
-                data['tonnage'] = f"{tonnage_num}t"
-                break
-        
-        if 'tonnage' not in data:
-            data['tonnage'] = '8t'  # Default
-        
-        # Set grab hire specific fields
-        data['type'] = '8yd'  # Default for grab hire
-        data['service'] = 'grab'
         
         # Extract phone
         phone_patterns = [
@@ -187,22 +160,30 @@ NEVER skip qualification questions. Always get pricing before asking to book.
         if email_match:
             data['emailAddress'] = email_match.group()
         
+        data['type'] = '8yd'  # Default for grab
+        data['service'] = 'grab'  # CORRECT SERVICE
         data['missing_info'] = missing
+        
+        # Ready for pricing check
+        has_postcode = 'postcode' in data
+        has_material = 'material_type' in data
+        data['ready_for_pricing'] = has_postcode and has_material
+        
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
         extracted = self.extract_and_validate_data(message)
         
-        # Create extracted info summary for the prompt
         extracted_info = f"""
-Name: {extracted.get('firstName', 'NOT PROVIDED')}
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Material Type: {extracted.get('material_type', 'NOT PROVIDED')}
 Material Category: {extracted.get('material_category', 'unknown')}
-Tonnage: {extracted.get('tonnage', '8t')}
-Phone: {extracted.get('phone', 'NOT PROVIDED')}
-Email: {extracted.get('emailAddress', 'NOT PROVIDED')}
-Missing Info: {extracted.get('missing_info', [])}
+Service: grab
+Type: 8yd
+Ready for Pricing: {extracted.get('ready_for_pricing', False)}
+Missing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'material_type']]}
+
+*** API Parameters: postcode={extracted.get('postcode', 'NOT PROVIDED')}, service=grab, type=8yd ***
 """
         
         agent_input = {
@@ -214,8 +195,6 @@ Missing Info: {extracted.get('missing_info', [])}
             for k, v in context.items():
                 agent_input[k] = v
                 
-        # Add extracted data for tools
         agent_input.update(extracted)
-
         response = self.executor.invoke(agent_input)
         return response["output"]
