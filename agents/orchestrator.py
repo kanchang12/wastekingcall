@@ -12,8 +12,11 @@ _GLOBAL_CONVERSATION_STATES = {}
 class AgentOrchestrator:
     """Orchestrates customer interactions between specialized agents with persistent state"""
     
-    def __init__(self, koyeb_url: str):
-        self.koyeb_url = koyeb_url
+    def __init__(self, llm, agents):
+        """Updated constructor to accept llm and agents"""
+        self.llm = llm
+        self.agents = agents
+        self.koyeb_url = "https://your-koyeb-app-url"  # replace with your Koyeb app URL
         global _GLOBAL_CONVERSATION_STATES
         self.conversation_states = _GLOBAL_CONVERSATION_STATES
         print("✅ AgentOrchestrator initialized with GLOBAL state management")
@@ -23,7 +26,6 @@ class AgentOrchestrator:
     # -------------------------
     
     def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
-        """Process customer message and decide to fetch price or create booking"""
         conversation_state = self._load_conversation_state(conversation_id)
         self._extract_and_update_state(message, conversation_state)
         
@@ -32,7 +34,7 @@ class AgentOrchestrator:
         
         extracted = conversation_state.get('extracted_info', {})
         postcode = extracted.get('postcode')
-        service = 'skip'  # For simplicity; can extend to other services
+        service = 'skip'
         type_ = extracted.get('type', '8yd')
         firstName = extracted.get('firstName')
         phone = extracted.get('phone')
@@ -42,18 +44,12 @@ class AgentOrchestrator:
         
         response = ""
         
-        # -------------------------
-        # FETCH PRICING
-        # -------------------------
         if wants_price and postcode and service and type_:
             print("💰 Customer asked for pricing")
             pricing_result = self._get_pricing(postcode, service, type_)
             response = f"Price for {type_} {service} at {postcode}: £{pricing_result.get('price', 'N/A')}"
             conversation_state['has_pricing'] = True
         
-        # -------------------------
-        # CREATE BOOKING
-        # -------------------------
         elif wants_booking and postcode and service and type_ and firstName and phone:
             print("📋 Customer asked to book")
             booking_ref = str(uuid.uuid4())
@@ -67,9 +63,6 @@ class AgentOrchestrator:
             else:
                 response = f"❌ Booking failed: {booking_result.get('error')}"
         
-        # -------------------------
-        # ASK FOR MISSING INFO
-        # -------------------------
         else:
             missing = []
             if not postcode:
@@ -83,7 +76,6 @@ class AgentOrchestrator:
                     missing.append("phone number")
             response = f"Please provide the following info: {', '.join(missing)}" if missing else "I'm processing your request..."
         
-        # Save state
         self._save_conversation_state(conversation_id, conversation_state, message, response, 'orchestrator')
         
         return {
@@ -99,7 +91,6 @@ class AgentOrchestrator:
     # -------------------------
     
     def _send_koyeb_webhook(self, url: str, payload: dict, method: str = "POST") -> dict:
-        """Send HTTP request to Koyeb webhook"""
         try:
             headers = {"Content-Type": "application/json"}
             if method.upper() == "POST":
@@ -117,13 +108,11 @@ class AgentOrchestrator:
     # -------------------------
     
     def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
-        """Call Koyeb endpoint to get pricing"""
         url = f"{self.koyeb_url}/api/wasteking-get-price"
         payload = {"postcode": postcode, "service": service, "type": type}
         return self._send_koyeb_webhook(url, payload, method="POST")
     
     def _create_booking_quote(self, type: str, service: str, postcode: str, firstName: str, phone: str, booking_ref: str) -> Dict[str, Any]:
-        """Call Koyeb endpoint to create booking and get payment link"""
         url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
         payload = {
             "booking_ref": booking_ref,
@@ -143,8 +132,7 @@ class AgentOrchestrator:
         global _GLOBAL_CONVERSATION_STATES
         if conversation_id in _GLOBAL_CONVERSATION_STATES:
             return _GLOBAL_CONVERSATION_STATES[conversation_id].copy()
-        default_state = {"conversation_id": conversation_id, "messages": [], "extracted_info": {}}
-        return default_state
+        return {"conversation_id": conversation_id, "messages": [], "extracted_info": {}}
     
     def _save_conversation_state(self, conversation_id: str, state: Dict[str, Any], message: str, response: str, agent_used: str):
         if 'messages' not in state:
@@ -159,7 +147,6 @@ class AgentOrchestrator:
         _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
     
     def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
-        """Extract postcode, name, phone, type/waste from customer message"""
         extracted = state.get('extracted_info', {})
         
         # Postcode
