@@ -1,5 +1,5 @@
-# agents/grab_hire_agent.py - FIXED IMPORT VERSION
-# CHANGES: Fixed class name and imports to work with your app.py, handles ALL except mav/skip
+# agents/grab_hire_agent.py - FIXED BOOKING LOGIC
+# CHANGES: Fixed to recognize booking requests and create actual bookings
 
 import json 
 import re
@@ -8,48 +8,46 @@ from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
 
-# CHANGE: Removed utils import that might not exist in your setup
-# from utils.rules_processor import RulesProcessor
-
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
         
-        # CHANGE: Simplified rule processing without external dependencies
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and GET PRICING NOW!
 
 IMPORTANT ROUTING: You handle ALL waste services EXCEPT "mav" (man and van) and "skip" (skip hire).
 This includes: grab hire, general waste, large items, heavy materials, construction waste, garden waste, office clearance, etc.
 
-CRITICAL API PARAMETERS:
-- service: "grab" (for grab hire) or determine appropriate service
-- type: "8yd" (default for grab)
-- postcode: Clean format like "LS14ED" (no spaces for API)
+CRITICAL WORKFLOW:
+1. If customer says "book" or wants to book: IMMEDIATELY call smp_api with action="create_booking_quote"
+2. If just asking for price: Call smp_api with action="get_pricing" then ask "Shall I book this for you?"
+3. Missing data → Ask once
 
-MANDATORY WORKFLOW:
-1. Extract postcode + material type from message
-2. If you have both: CALL smp_api IMMEDIATELY with service="grab"
-3. Show price to customer
-4. If customer wants to book: CALL smp_api to create_booking_quote
-5. Booking will automatically call supplier
+BOOKING KEYWORDS: book, booking, confirm, yes book it, proceed, go ahead, arrange
+
+API CALLS:
+- For pricing: smp_api(action="get_pricing", postcode=X, service="grab", type="8yd")
+- For booking: smp_api(action="create_booking_quote", postcode=X, service="grab", type="8yd", firstName=X, phone=X, booking_ref=X)
+
+AFTER PRICING: Always ask "Right then! Shall I book this grab hire for you?"
 
 PERSONALITY:
 - Start with: "Alright love!" or "Right then!"
-- Get pricing first, then book if customer wants
+- Get pricing first, then ask to book
+- Create booking if customer confirms
 
 MATERIAL GUIDANCE:
 - Heavy materials (soil, rubble, concrete) = grab lorry ideal
 - Large volumes = grab lorry
 - Light materials = can still use grab if customer prefers
 
-CRITICAL: Always call smp_api with correct service type when you have postcode + material."""),
+CRITICAL: Always call smp_api with correct action based on customer intent."""),
             ("human", """Customer: {input}
 
 Extracted data: {extracted_info}
 
-INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
+INSTRUCTION: If customer wants to BOOK, call create_booking_quote. If just pricing, call get_pricing then ask to book."""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -67,11 +65,11 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
         )
     
     def extract_and_validate_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
-        """Enhanced data extraction with context handling"""
+        """Enhanced data extraction with booking recognition"""
         data = {}
         missing = []
         
-        # CHANGE: Check context first to prevent data loss
+        # Check context first to prevent data loss
         if context:
             for key in ['postcode', 'firstName', 'phone', 'emailAddress']:
                 if context.get(key):
@@ -82,7 +80,8 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
             r'name\s+(?:is\s+)?(\w+)',
             r'i\'?m\s+(\w+)',
             r'my\s+name\s+is\s+(\w+)',
-            r'this\s+is\s+(\w+)'
+            r'this\s+is\s+(\w+)',
+            r'name\s+(\w+)'
         ]
         for pattern in name_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
@@ -90,7 +89,7 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
                 data['firstName'] = match.group(1).title()
                 break
         
-        # CHANGE: Improved postcode extraction
+        # Improved postcode extraction
         postcode_found = False
         postcode_patterns = [
             r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b',  # Full UK postcode
@@ -109,7 +108,7 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
             if postcode_found:
                 break
         
-        # CHANGE: Enhanced material detection for all waste types
+        # Enhanced material detection for all waste types
         material_keywords = {
             # Heavy materials (ideal for grab)
             'soil': 'heavy', 'muck': 'heavy', 'rubble': 'heavy', 'hardcore': 'heavy',
@@ -142,9 +141,10 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
         
         # Extract phone
         phone_patterns = [
+            r'\b(07\d{9})\b',  # UK mobile
             r'\b(\d{11})\b',
-            r'phone\s+(?:is\s+)?(\d{10,11})',
-            r'mobile\s+(?:is\s+)?(\d{10,11})',
+            r'phone\s+(?:is\s+|number\s+)?(\d{10,11})',
+            r'mobile\s+(?:is\s+|number\s+)?(\d{10,11})',
             r'number\s+(?:is\s+)?(\d{10,11})'
         ]
         for pattern in phone_patterns:
@@ -159,33 +159,55 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
         if email_match:
             data['emailAddress'] = email_match.group()
         
-        # CHANGE: Service determination based on materials and context
+        # Service determination
         service_type = 'grab'  # Default for grab agent
-        
-        # Check if specific service mentioned
-        if 'grab' in message_lower or 'lorry' in message_lower:
-            service_type = 'grab'
-        elif found_material and material_category == 'heavy':
-            service_type = 'grab'
-        
         data['service'] = service_type
         data['type'] = '8yd'  # Default size
         
-        # Check what's missing for pricing
+        # Check if this is a booking request
+        is_booking_request = self._is_booking_request(message)
+        data['is_booking_request'] = is_booking_request
+        
+        # Generate booking reference if booking request
+        if is_booking_request:
+            import uuid
+            data['booking_ref'] = str(uuid.uuid4())
+        
+        # Check what's missing for pricing/booking
         if 'postcode' not in data:
             missing.append('postcode')
         if not found_material and 'material_type' not in data:
             missing.append('material_type')
         
+        # For booking, need name and phone
+        if is_booking_request:
+            if 'firstName' not in data:
+                missing.append('firstName')
+            if 'phone' not in data:
+                missing.append('phone')
+        
         data['missing_info'] = missing
-        data['ready_for_pricing'] = len(missing) == 0
+        data['ready_for_pricing'] = 'postcode' in data and (found_material or 'material_type' in data)
+        data['ready_for_booking'] = data['ready_for_pricing'] and 'firstName' in data and 'phone' in data
         
         return data
     
-    def process_message(self, message: str, context: Dict = None) -> str:
-        """Enhanced message processing with better context handling"""
+    def _is_booking_request(self, message: str) -> bool:
+        """Check if customer wants to book (not just get pricing)"""
+        message_lower = message.lower()
         
-        # CHANGE: Clear old data if new postcode detected
+        booking_keywords = [
+            'book', 'booking', 'confirm', 'yes book', 'proceed', 'go ahead', 
+            'arrange', 'order', 'want to book', 'please book', 'book it',
+            'yes please', 'confirm booking', 'make booking'
+        ]
+        
+        return any(keyword in message_lower for keyword in booking_keywords)
+    
+    def process_message(self, message: str, context: Dict = None) -> str:
+        """Enhanced message processing with booking recognition"""
+        
+        # Clear old data if new postcode detected
         extracted = self.extract_and_validate_data(message, context)
         
         # If we have a new postcode different from context, prioritize the new one
@@ -200,23 +222,34 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api immediately."""),
                 if value and key not in extracted:
                     extracted[key] = value
         
+        # Determine action based on booking request and data availability
+        action = "get_pricing"  # Default
+        if extracted.get('is_booking_request') and extracted.get('ready_for_booking'):
+            action = "create_booking_quote"
+        elif extracted.get('ready_for_pricing'):
+            action = "get_pricing"
+        
         extracted_info = f"""
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Material Type: {extracted.get('material_type', 'NOT PROVIDED')}
 Material Category: {extracted.get('material_category', 'unknown')}
 Service: {extracted.get('service', 'grab')}
 Type: {extracted.get('type', '8yd')}
+Is Booking Request: {extracted.get('is_booking_request', False)}
 Ready for Pricing: {extracted.get('ready_for_pricing', False)}
+Ready for Booking: {extracted.get('ready_for_booking', False)}
+Action: {action}
 Missing: {extracted.get('missing_info', [])}
 Customer Name: {extracted.get('firstName', 'NOT PROVIDED')}
 Customer Phone: {extracted.get('phone', 'NOT PROVIDED')}
 
-*** API Parameters: postcode={extracted.get('postcode', 'NOT PROVIDED')}, service={extracted.get('service', 'grab')}, type={extracted.get('type', '8yd')} ***
+*** API Parameters: action={action}, postcode={extracted.get('postcode', 'NOT PROVIDED')}, service={extracted.get('service', 'grab')}, type={extracted.get('type', '8yd')} ***
 """
         
         agent_input = {
             "input": message,
-            "extracted_info": extracted_info
+            "extracted_info": extracted_info,
+            "action": action
         }
         
         # Add all extracted data to agent input
