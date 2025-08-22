@@ -11,7 +11,7 @@ from agents.elevenlabs_supplier_caller import ElevenLabsSupplierCaller
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
     description: str = """WasteKing API for pricing, booking quotes, payment processing, and supplier calling."""
-    koyeb_url: str = Field(default="https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app")
+    koyeb_url: str = Field(default_factory=lambda: os.getenv('KOYEB_URL', 'https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app'))
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         print(f"\n🔧 ==================== SMP API TOOL CALLED ====================")
@@ -20,15 +20,21 @@ class SMPAPITool(BaseTool):
         print(f"🔧 KOYEB URL: {self.koyeb_url}")
         
         try:
+            print(f"🔧 SMP API TOOL: Routing to action handler...")
             if action == "get_pricing":
+                print(f"🔧 SMP API TOOL: Calling _get_pricing()")
                 result = self._get_pricing(**kwargs)
             elif action == "create_booking_quote":
+                print(f"🔧 SMP API TOOL: Calling _create_booking_quote()")
                 result = self._create_booking_quote(**kwargs)
             elif action == "take_payment":
+                print(f"🔧 SMP API TOOL: Calling _take_payment()")
                 result = self._take_payment(**kwargs)
             elif action == "call_supplier":
+                print(f"🔧 SMP API TOOL: Calling _call_supplier()")
                 result = self._call_supplier(**kwargs)
             else:
+                print(f"❌ SMP API TOOL: Unknown action: {action}")
                 result = {"success": False, "error": f"Unknown action: {action}"}
             
             print(f"🔧 TOOL RESULT:")
@@ -45,8 +51,9 @@ class SMPAPITool(BaseTool):
     
     def _send_koyeb_webhook(self, url, data_payload, method="POST"):
         try:
-            print(f"🔄 Sending {method} to: {url}")
+            print(f"🔄 SMP API TOOL: Sending {method} to: {url}")
             print(f"🔄 Payload: {json.dumps(data_payload, indent=2)}")
+            print(f"🔧 SMP API TOOL: TOOL CALL - requests.{method.lower()}()")
             
             if method.upper() == "GET":
                 response = requests.get(url, params=data_payload, timeout=30)
@@ -98,8 +105,8 @@ class SMPAPITool(BaseTool):
                 "success": True,
                 "booking_ref": response.get('booking_ref'),
                 "price": response.get('price'),
-                "real_supplier_phone": "+447394642517",
-                "supplier_name": "Local Supplier",
+                "real_supplier_phone": os.getenv('SUPPLIER_PHONE', '+44XXXXXXXXXX'),
+                "supplier_name": os.getenv('SUPPLIER_NAME', 'Local Supplier'),
                 "postcode": postcode,
                 "service": service,
                 "type": type
@@ -203,6 +210,7 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameters"}
         
         try:
+            print(f"🔧 SMP API TOOL: Instantiating ElevenLabsSupplierCaller")
             caller = ElevenLabsSupplierCaller(
                 elevenlabs_api_key=os.getenv('ELEVENLABS_API_KEY'),
                 agent_id=os.getenv('ELEVENLABS_AGENT_ID'),
@@ -226,6 +234,8 @@ class SMPAPITool(BaseTool):
                 "booking_ref": booking_ref
             }
             
+            print(f"🔧 SMP API TOOL: TOOL CALL - ElevenLabsSupplierCaller.call_supplier_from_smp_response")
+            print(f"🔧 TOOL CALL: caller.call_supplier_from_smp_response(smp_response, booking_details)")
             result = caller.call_supplier_from_smp_response(smp_response, booking_details)
             
             return {
