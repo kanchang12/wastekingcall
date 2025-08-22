@@ -129,7 +129,7 @@ class SMPAPITool(BaseTool):
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing - EXACT copy from your Flask wasteking_marketplace function"""
+        """Get pricing - Steps 1 and 2 only"""
         
         # Validate required parameters
         if not postcode:
@@ -142,21 +142,21 @@ class SMPAPITool(BaseTool):
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
-            # Create booking - EXACT same as your Flask code
+            # STEP 1: Create booking
             booking_ref = self._create_wasteking_booking()
             if not booking_ref:
                 return {"success": False, "message": "Failed to create booking"}
 
-            # Search payload - EXACT same format as your Flask code
+            # STEP 2: Get pricing with payload format
             search_payload = {
-                "search": {
+                "payload": {
                     "postCode": postcode,
                     "service": service,
                     "type": type
                 }
             }
             
-            # Get pricing - EXACT same as your Flask code
+            # Get pricing
             response_data = self._update_wasteking_booking(booking_ref, search_payload)
             if not response_data:
                 return {"success": False, "message": "No pricing data"}
@@ -166,7 +166,7 @@ class SMPAPITool(BaseTool):
             supplier_phone = quote_data.get('supplierPhone', "+447823656907")
             supplier_name = quote_data.get('supplierName', "Default Supplier")
             
-            # Return format - EXACT same as your Flask code
+            # Return format
             return {
                 "success": True,
                 "booking_ref": booking_ref,
@@ -188,7 +188,7 @@ class SMPAPITool(BaseTool):
     
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Create booking quote with payment link"""
+        """Create booking quote - STEP 3: Add firstName and phone to get booking link"""
         
         # Validate required parameters
         if not type:
@@ -197,6 +197,10 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": "Missing required parameter: service"}
         if not postcode:
             return {"success": False, "error": "Missing required parameter: postcode"}
+        if not kwargs.get('firstName'):
+            return {"success": False, "error": "Missing required parameter: firstName"}
+        if not kwargs.get('phone'):
+            return {"success": False, "error": "Missing required parameter: phone"}
             
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
@@ -208,26 +212,16 @@ class SMPAPITool(BaseTool):
                 if not booking_ref:
                     return {"success": False, "message": "Failed to create booking"}
 
-            # Payment payload structure as shown in screenshot
+            # STEP 3: Update with firstName and phone to get booking link
             payment_payload = {
-                "bookingRef": booking_ref,
-                "type": type,
-                "service": service,
-                "postcode": postcode,
-                "firstName": kwargs.get("firstName", ""),
-                "phone": kwargs.get("phone", ""),
-                "lastName": kwargs.get("lastName", ""),
-                "emailAddress": kwargs.get("emailAddress", ""),
-                "time": kwargs.get("time", ""),
-                "date": kwargs.get("date", ""),
-                "extra_items": kwargs.get("extra_items", ""),
-                "discount_applied": kwargs.get("discount_applied", False),
-                "call_sid": kwargs.get("call_sid", ""),
-                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
+                "payload": {
+                    "postCode": postcode,
+                    "service": service,
+                    "type": type,
+                    "firstName": kwargs.get('firstName'),
+                    "phone": kwargs.get('phone')
+                }
             }
-            
-            # Remove empty fields
-            payment_payload = {k: v for k, v in payment_payload.items() if v}
             
             self._log_with_timestamp(f"📋 Payment payload: {json.dumps(payment_payload, indent=2)}")
             
@@ -420,8 +414,6 @@ Thank you!"""
             return pricing_result
         
         supplier_phone = pricing_result.get("supplier_phone")
-        print(supplier_phone)
-        supplier_phone = "+447394642517"
         supplier_name = pricing_result.get("supplier_name")
         
         if not supplier_phone:
