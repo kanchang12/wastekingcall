@@ -89,24 +89,30 @@ class SMPAPITool(BaseTool):
             self._log_error("Failed to create booking", e)
             return None
 
-    def _update_wasteking_booking(self, booking_ref, update_data):
+    def _update_wasteking_booking(self, booking_ref, postcode, service, type_):
         """Update booking"""
         headers = {
             "x-wasteking-request": self.WASTEKING_ACCESS_TOKEN,
             "Content-Type": "application/json"
         }
-        
+    
+        # Build payload correctly
         payload = {
-            "bookingRef": booking_ref,   # top-level
+            "bookingRef": booking_ref,
             "payload": {
                 "postCode": postcode,
                 "service": service,
                 "type": type_
             }
         }
-        
-        
-        update_url = f"{WASTEKING_BASE_URL}api/booking/update/"
+    
+        update_url = f"{self.base_url}api/booking/update/"
+    
+        self._log_with_timestamp(
+            f"🔄 Updating booking {booking_ref} with payload: {json.dumps(payload, indent=2)}"
+        )
+        self._log_with_timestamp(f"🔄 Update URL: {update_url}")
+    
         response = requests.post(
             update_url,
             headers=headers,
@@ -114,32 +120,17 @@ class SMPAPITool(BaseTool):
             timeout=20,
             verify=False
         )
-            self._log_with_timestamp(f"🔄 Updating booking {booking_ref} with payload: {json.dumps(payload, indent=2)}")
-            
-            update_url = f"{self.base_url}api/booking/update/"
-            self._log_with_timestamp(f"🔄 Update URL: {update_url}")
-            
-            response = requests.post(
-                update_url,
-                headers=headers,
-                json=payload1,
-                timeout=20,
-                verify=False
-            )
-            
-            self._log_with_timestamp(f"🔄 Update response status: {response.status_code}")
-            self._log_with_timestamp(f"🔄 Update response text: {response.text}")
-            
-            if response.status_code in [200, 201]:
-                self._log_with_timestamp(f"✅ Updated booking {booking_ref}")
-                return response.json()
-            else:
-                self._log_with_timestamp(f"❌ Failed to update booking: {response.status_code}")
-                return None
-                
-        except Exception as e:
-            self._log_error(f"Failed to update booking {booking_ref}", e)
+    
+        self._log_with_timestamp(f"🔄 Update response status: {response.status_code}")
+        self._log_with_timestamp(f"🔄 Update response text: {response.text}")
+    
+        if response.status_code in [200, 201]:
+            self._log_with_timestamp(f"✅ Updated booking {booking_ref}")
+            return response.json()
+        else:
+            self._log_with_timestamp(f"❌ Failed to update booking: {response.status_code}")
             return None
+
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
