@@ -401,7 +401,7 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         ]
         
         for pattern in postcode_patterns:
-            postcode_match = re.search(postcode_pattern, message.upper())
+            postcode_match = re.search(postcode_patterns, message.upper())
             if postcode_match:
                 raw_postcode = postcode_match.group(1)
                 clean_postcode = raw_postcode.replace(' ', '').upper()
