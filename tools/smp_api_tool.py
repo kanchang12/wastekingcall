@@ -97,7 +97,7 @@ class SMPAPITool(BaseTool):
                 "source": "wasteking.co.uk"
             }
             
-            create_url = f"{self.koyeb_url}/api/wasteking-create-booking"  # Different endpoint for step 1
+            create_url = f"{self.koyeb_url}/api/wasteking-get-price"  # Different endpoint for step 1
             step1_response = self._send_koyeb_webhook(create_url, step1_payload)
             
             if not step1_response or not step1_response.get("booking_ref"):
@@ -212,7 +212,7 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": f"Booking quote failed: {str(e)}"}
     
-    def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
+        def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Send payment link to customer"""
         
@@ -233,7 +233,7 @@ class SMPAPITool(BaseTool):
                 "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
             }
             
-            url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
+            url = f"{self.koyeb_url}/api/send-payment-sms"
             response_data = self._send_koyeb_webhook(url, data_payload)
             
             if not response_data or not response_data.get("success"):
