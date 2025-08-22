@@ -23,16 +23,24 @@ CRITICAL RULES:
 2. If you have postcode + waste type: IMMEDIATELY call smp_api for pricing
 3. If pricing fails: give a helpful response anyway
 4. Be friendly but FAST
+5. ALWAYS log your tool calls completely
 
 YOUR CONTEXT CONTAINS:
 - Customer's previous answers
 - Extracted information (postcode, waste type, name, phone)
 - Conversation history
 
-API CALL FORMAT:
+API CALL FORMAT - ALWAYS USE EXACT PARAMETERS:
 smp_api(action="get_pricing", postcode="LS14ED", service="{service_type}", type="8yd")
 
-NEVER ASK AGAIN for data that's in your context!"""),
+NEVER ASK AGAIN for data that's in your context!
+
+PRICING GUIDELINES (from PDF rules):
+- Skip Hire: £85-150 depending on size and location
+- Man & Van: £120-180 depending on items and distance  
+- Grab Hire: £180-250 depending on load size
+- Always add "plus VAT" to quoted prices
+- Include delivery and collection in price"""),
             ("human", """Customer message: {input}
 
 AVAILABLE CONTEXT:
@@ -42,7 +50,7 @@ Name: {name}
 Phone: {phone}
 Previous conversation: {conversation_history}
 
-INSTRUCTION: Use this context. Don't ask for data you already have!"""),
+INSTRUCTION: Use this context. Don't ask for data you already have! Call smp_api if you have postcode and waste type!"""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -93,18 +101,20 @@ INSTRUCTION: Use this context. Don't ask for data you already have!"""),
         messages = context.get('messages', [])
         conversation_history = self._format_conversation_history(messages)
         
-        print(f"🔧 STREAMLINED AGENT DATA:")
-        print(f"   Postcode: {postcode}")
-        print(f"   Waste: {waste_type}")
-        print(f"   Name: {name}")
-        print(f"   Phone: {phone}")
+        print(f"🔧 STREAMLINED {self.service_type.upper()} AGENT DATA:")
+        print(f"   📍 Postcode: {postcode}")
+        print(f"   🗑️ Waste: {waste_type}")
+        print(f"   👤 Name: {name}")
+        print(f"   📞 Phone: {phone}")
+        print(f"   📜 Has Conversation History: {'Yes' if conversation_history != 'No previous conversation' else 'No'}")
         
         # Check if we can get pricing immediately
         if (postcode != "NOT PROVIDED" and 
             waste_type != "NOT PROVIDED" and 
             self._is_pricing_request(message, conversation_history)):
             
-            print(f"🔧 IMMEDIATELY CALLING API - have required data")
+            print(f"🔧 READY FOR PRICING API CALL")
+            print(f"🔧 TOOL CALL WILL BE: smp_api(action='get_pricing', postcode='{postcode.replace(' ', '')}', service='{self.service_type}', type='8yd')")
             
             # Call API directly without asking questions
             try:
@@ -120,7 +130,9 @@ INSTRUCTION: Use this context. Don't ask for data you already have!"""),
                     "type": "8yd"
                 }
                 
+                print(f"🔧 CALLING AGENT EXECUTOR WITH: {agent_input}")
                 response = self.executor.invoke(agent_input)
+                print(f"🔧 AGENT EXECUTOR RESPONSE: {response}")
                 return response["output"]
                 
             except Exception as e:
