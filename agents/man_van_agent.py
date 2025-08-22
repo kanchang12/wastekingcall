@@ -1,5 +1,5 @@
-# man_van_agent.py - REPLACEMENT FILE
-# CHANGES: Minimal changes, enhanced data extraction, strict heavy item restrictions maintained
+# skip_hire_agent.py - REPLACEMENT FILE
+# CHANGES: Minimal changes, enhanced data extraction, better context handling
 
 import json 
 import re
@@ -9,28 +9,29 @@ from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
 from utils.rules_processor import RulesProcessor
 
-class ManVanAgent:
+class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Man & Van agent with STRICT RULES.
+            ("system", """You are a Skip Hire agent. Be FAST and DIRECT.
 
-HEAVY ITEMS RULE - CANNOT HANDLE:
-bricks, mortar, concrete, soil, tiles, construction waste, industrial waste, rubble, hardcore, sand, gravel, stone, demolition waste
-
-If heavy items detected: "Sorry mate, bricks/concrete/soil are too heavy for Man & Van. You need Skip Hire or Grab Hire for that."
+RULES:
+- If you have postcode + waste type: IMMEDIATELY call smp_api
+- service="skip" ALWAYS  
+- Never ask for data already provided
+- Get price fast
 
 WORKFLOW:
-1. Check for heavy items FIRST - if found, REFUSE and suggest other services
-2. Light items + postcode → Call smp_api(action="get_pricing", postcode=X, service="mav", type="6yd")
-3. If customer wants to book → Call smp_api(action="create_booking_quote") 
-4. Missing data → Ask once
+1. Has postcode + waste → Call smp_api(action="get_pricing", postcode=X, service="skip", type="8yd")
+2. Customer wants to book → Call smp_api(action="create_booking_quote")
+3. Missing postcode → "I need your postcode for pricing"
+4. Missing waste type → "What type of waste do you have?"
 
-LIGHT ITEMS WE HANDLE: furniture, appliances, household goods, office items, bags, boxes, garden waste (leaves/grass only)
+SKIP SIZES: 4yd, 6yd, 8yd, 12yd (default 8yd)
 
-Be direct. Follow rules strictly."""),
+Be direct. Get price. No chat."""),
             ("human", "Customer: {input}\n\nData: {extracted_info}"),
             ("placeholder", "{agent_scratchpad}")
         ])
@@ -39,32 +40,25 @@ Be direct. Follow rules strictly."""),
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=8)
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        """CHANGE: Enhanced processing with context handling"""
+        """CHANGE: Enhanced processing with better context handling"""
         
-        # CHANGE: Extract data with context
+        # Extract data with context
         extracted_data = self._extract_data(message, context)
         
-        print(f"🔧 MAV DATA: {json.dumps(extracted_data, indent=2)}")
+        print(f"🔧 SKIP DATA: {json.dumps(extracted_data, indent=2)}")
         
-        # CHANGE: FIRST - Check for heavy items (strict enforcement)
-        heavy_items = extracted_data.get('heavy_items', [])
-        if heavy_items:
-            print(f"🔧 HEAVY ITEMS DETECTED: {heavy_items}")
-            return f"Sorry mate, {', '.join(heavy_items)} are too heavy for our Man & Van service. You need Skip Hire or Grab Hire for that type of waste. Let me transfer you to the right team!"
-        
-        # Check if ready for API call (suitable items + postcode)
+        # Check if ready for API call
         postcode = extracted_data.get('postcode')
-        items = extracted_data.get('items')
+        waste_type = extracted_data.get('waste_type')
         
-        if postcode and items and not heavy_items:
+        if postcode and waste_type:
             print(f"🔧 READY FOR API - calling immediately")
             
             extracted_info = f"""
 Postcode: {postcode}
-Items: {items}
-Service: mav
-Type: 6yd
-Heavy Items: {heavy_items}
+Waste Type: {waste_type}
+Service: skip
+Type: {extracted_data.get('size', '8yd')}
 Customer Name: {extracted_data.get('firstName', 'NOT PROVIDED')}
 Customer Phone: {extracted_data.get('phone', 'NOT PROVIDED')}
 Ready for API: True
@@ -81,12 +75,12 @@ Ready for API: True
         
         # Missing data - ask directly
         if not postcode:
-            return "I need your postcode to get Man & Van pricing. What's your postcode?"
+            return "I need your postcode to get skip hire pricing. What's your postcode?"
         
-        if not items:
-            return "What items do you need collected? (furniture, appliances, household goods, etc.)"
+        if not waste_type:
+            return "What type of waste do you have? (construction, garden, household, etc.)"
         
-        return "Let me get you a Man & Van quote."
+        return "Let me get you a skip hire quote."
     
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
         """CHANGE: Enhanced data extraction with context handling"""
@@ -94,7 +88,7 @@ Ready for API: True
         
         # Check context first
         if context:
-            for key in ['postcode', 'firstName', 'phone', 'emailAddress']:
+            for key in ['postcode', 'firstName', 'phone', 'emailAddress', 'waste_type']:
                 if context.get(key):
                     data[key] = context[key]
         
@@ -103,14 +97,14 @@ Ready for API: True
         if postcode:
             data['postcode'] = postcode
         
-        # Extract items and check for heavy restrictions
-        items = self._get_items(message, context)
-        if items:
-            data['items'] = items
+        # Extract waste type
+        waste_type = self._get_waste_type(message, context)
+        if waste_type:
+            data['waste_type'] = waste_type
         
-        # CHANGE: Enhanced heavy item detection
-        heavy_items = self._check_heavy_items(items or "")
-        data['heavy_items'] = heavy_items
+        # Extract skip size
+        size = self._get_size(message, context)
+        data['size'] = size
         
         # Extract customer info
         name_match = re.search(r'(?:name is|i\'m|call me)\s+(\w+)', message, re.IGNORECASE)
@@ -125,30 +119,10 @@ Ready for API: True
         if email_match:
             data['emailAddress'] = email_match.group()
         
-        data['service'] = 'mav'
-        data['type'] = '6yd'
+        data['service'] = 'skip'
+        data['type'] = size  # Use size as type for API
         
         return data
-    
-    def _check_heavy_items(self, items: str) -> List[str]:
-        """CHANGE: Enhanced heavy item detection with more items"""
-        if not items:
-            return []
-            
-        items_lower = items.lower()
-        restricted = [
-            'brick', 'bricks', 'mortar', 'concrete', 'cement', 'soil', 'dirt', 'muck',
-            'tile', 'tiles', 'stone', 'stones', 'rubble', 'sand', 'gravel', 'hardcore',
-            'industrial waste', 'construction waste', 'building waste', 'demolition',
-            'plaster', 'asbestos', 'metal waste'
-        ]
-        
-        found_restricted = []
-        for item in restricted:
-            if item in items_lower:
-                found_restricted.append(item)
-        
-        return found_restricted
     
     def _get_postcode(self, message: str, context: Dict) -> str:
         """Extract postcode with context priority"""
@@ -170,25 +144,38 @@ Ready for API: True
         
         return None
     
-    def _get_items(self, message: str, context: Dict) -> str:
-        """Extract items with context priority"""
+    def _get_waste_type(self, message: str, context: Dict) -> str:
+        """Extract waste type with context priority"""
         # Check context first
-        if context and context.get('items'):
-            return context['items']
+        if context and context.get('waste_type'):
+            return context['waste_type']
         
         # Extract from message
-        mav_items = [
-            'bags', 'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 
-            'books', 'clothes', 'boxes', 'appliances', 'fridge', 'freezer',
-            'washing machine', 'dishwasher', 'office', 'desk', 'cabinet',
-            'garden waste', 'leaves', 'grass', 'household', 'general',
-            # Also include restricted items for detection
-            'brick', 'bricks', 'mortar', 'concrete', 'soil', 'tiles', 'industrial'
+        waste_types = [
+            'construction', 'building', 'garden', 'household', 'mixed', 
+            'bricks', 'concrete', 'soil', 'rubble', 'mortar', 'wood',
+            'metal', 'plastic', 'cardboard', 'general', 'office',
+            'demolition', 'renovation', 'clearance'
         ]
         found = []
         message_lower = message.lower()
-        for item in mav_items:
-            if item in message_lower:
-                found.append(item)
+        for waste in waste_types:
+            if waste in message_lower:
+                found.append(waste)
         
         return ', '.join(found) if found else None
+    
+    def _get_size(self, message: str, context: Dict) -> str:
+        """Extract skip size with context priority"""
+        # Check context first
+        if context and context.get('size'):
+            return context['size']
+        
+        # Extract from message
+        size_patterns = [r'(\d+)\s*(?:yard|yd)', r'(\d+)yd']
+        for pattern in size_patterns:
+            match = re.search(pattern, message.lower())
+            if match:
+                return f"{match.group(1)}yd"
+        
+        return "8yd"  # Default size
