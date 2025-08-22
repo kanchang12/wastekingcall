@@ -1,45 +1,4 @@
-def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
-                    type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing - needs firstName and phone for WasteKing"""
-        
-        # Validate required parameters
-        if not postcode:
-            return {"success": False, "error": "Missing required parameter: postcode"}
-        if not service:
-            return {"success": False, "error": "Missing required parameter: service"}
-        if not type:
-            return {"success": False, "error": "Missing required parameter: type"}
-        if not kwargs.get('firstName'):
-            return {"success": False, "error": "Missing required parameter: firstName"}
-        if not kwargs.get('phone'):
-            return {"success": False, "error": "Missing required parameter: phone"}
-            
-        print(f"💰 Getting pricing for {service} {type} in {postcode}")
-        
-        try:
-            # Create booking
-            booking_ref = self._create_wasteking_booking()
-            if not booking_ref:
-                return {"success": False, "message": "Failed to create booking"}
-
-            # Search payload - needs firstName and phone
-            search_payload = {
-                "postCode": postcode,
-                "service": service,
-                "type": type,
-                "firstName": kwargs.get('firstName'),
-                "phone": kwargs.get('phone')
-            }
-            
-            # Get pricing
-            response_data = self._update_wasteking_booking(booking_ref, search_payload)
-            if not response_data:
-                return {"success": False, "message": "No pricing data"}
-
-            quote_data = response_data.get('quote', {})
-            price = quote_data.get('price', '0')
-            supplier_phone = quote_data.get('supplierPhone', "+447823656907")
-            supplier_name = quote_data.get('supplierName', "Default Supplier")import requests
+import requests
 import json
 import os
 import time
@@ -170,34 +129,45 @@ class SMPAPITool(BaseTool):
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing - EXACT copy from your Flask wasteking_marketplace function"""
+        """Get pricing - supports both simple and detailed pricing requests"""
         
         # Validate required parameters
         if not postcode:
             return {"success": False, "error": "Missing required parameter: postcode"}
         if not service:
             return {"success": False, "error": "Missing required parameter: service"}
-        if not type:
-            return {"success": False, "error": "Missing required parameter: type"}
+        if not type_:
+            return {"success": False, "error": "Missing required parameter: type_"}
             
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
-            # Create booking - EXACT same as your Flask code
+            # Create booking
             booking_ref = self._create_wasteking_booking()
             if not booking_ref:
                 return {"success": False, "message": "Failed to create booking"}
 
-            # Search payload - EXACT same format as your Flask code
-            search_payload = {
-                "search": {
+            # Check if firstName and phone are provided for detailed search
+            if kwargs.get('firstName') and kwargs.get('phone'):
+                # Detailed search payload with customer info
+                search_payload = {
                     "postCode": postcode,
                     "service": service,
-                    "type": type
+                    "type": type,
+                    "firstName": kwargs.get('firstName'),
+                    "phone": kwargs.get('phone')
                 }
-            }
+            else:
+                # Simple search payload
+                search_payload = {
+                    "search": {
+                        "postCode": postcode,
+                        "service": service,
+                        "type": type
+                    }
+                }
             
-            # Get pricing - EXACT same as your Flask code
+            # Get pricing
             response_data = self._update_wasteking_booking(booking_ref, search_payload)
             if not response_data:
                 return {"success": False, "message": "No pricing data"}
@@ -207,7 +177,7 @@ class SMPAPITool(BaseTool):
             supplier_phone = quote_data.get('supplierPhone', "+447823656907")
             supplier_name = quote_data.get('supplierName', "Default Supplier")
             
-            # Return format - EXACT same as your Flask code
+            # Return format
             return {
                 "success": True,
                 "booking_ref": booking_ref,
@@ -451,8 +421,8 @@ Thank you!"""
             return {"success": False, "error": "Missing required parameter: postcode"}
         if not service:
             return {"success": False, "error": "Missing required parameter: service"}
-        if not type_:
-            return {"success": False, "error": "Missing required parameter: type_"}
+        if not type:
+            return {"success": False, "error": "Missing required parameter: type"}
             
         # First get pricing to get supplier details
         pricing_result = self._get_pricing(postcode=postcode, service=service, type=type_, **kwargs)
@@ -475,7 +445,7 @@ Thank you!"""
             )
             
             call_result = caller.call_supplier_for_availability(
-                supplier_phone="07823656907",
+                supplier_phone="07823656907",  # Original hardcoded phone
                 service_type=service,
                 postcode=postcode,
                 date=date or "ASAP"
