@@ -24,7 +24,7 @@ class GrabHireAgent:
 
 IMPORTANT ROUTING: You handle ALL waste services EXCEPT "mav" (man and van) and "skip" (skip hire).
 This includes: grab hire, general waste, large items, heavy materials, construction waste, garden waste, office clearance, etc.
-
+Out side office calls, you will attend, never forward but try to make the sale get price, get booking link, given nothing else is stopping, make the sale
 RULES FROM PDF KNOWLEDGE BASE:
 """ + rule_text + """
 
