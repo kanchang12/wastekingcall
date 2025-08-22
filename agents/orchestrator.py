@@ -1,5 +1,5 @@
-# agents/orchestrator.py - REPLACEMENT FILE
-# CHANGES: Updated routing logic - Grab handles ALL except mav and skip
+# agents/orchestrator.py - FIXED IMPORT VERSION
+# CHANGES: Fixed imports, updated routing logic - Grab handles ALL except mav and skip
 
 import re
 import json
@@ -67,8 +67,8 @@ class AgentOrchestrator:
                 "conversation_id": conversation_id
             }
     
-    def _determine_agent(self, message: str, context: Dict = None) -> tuple[str, str]:
-        """CHANGE: Updated routing logic - Grab handles ALL except mav and skip"""
+    def _determine_agent(self, message: str, context: Dict = None) -> tuple:
+        """Updated routing logic - Grab handles ALL except mav and skip"""
         
         message_lower = message.lower()
         
