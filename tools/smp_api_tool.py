@@ -14,7 +14,7 @@ class SMPAPITool(BaseTool):
     WasteKing API for pricing, booking quotes, payment processing, and supplier calling.
     
     Required parameters for each action:
-    - get_pricing: postcode, service, type (e.g., postcode="[POSTCODE]", service="skip-hire", type="8yd")
+    - get_pricing: postcode, service, type (e.g., postcode="LS14ED", service="skip-hire", type="8yd")
     - create_booking_quote: postcode, service, type, firstName, phone, booking_ref
     - take_payment: call_sid, customer_phone, quote_id, amount
     - call_supplier: supplier_phone, supplier_name, booking_ref, message
@@ -79,7 +79,7 @@ class SMPAPITool(BaseTool):
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """STEP 1: Get booking ref, STEP 2: Get price"""
+        """Get pricing - send postcode, service, type directly to Flask app"""
         
         if not postcode:
             return {"success": False, "error": "Missing required parameter: postcode"}
@@ -91,42 +91,28 @@ class SMPAPITool(BaseTool):
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
-            # STEP 1: Get booking reference FIRST
-            step1_payload = {
-                "type": "chatbot",
-                "source": "wasteking.co.uk"
-            }
-            
-            create_url = f"{self.koyeb_url}/api/wasteking-get-price"  # Different endpoint for step 1
-            step1_response = self._send_koyeb_webhook(create_url, step1_payload)
-            
-            if not step1_response or not step1_response.get("booking_ref"):
-                return {"success": False, "message": "Failed to create booking"}
-                
-            booking_ref = step1_response.get("booking_ref")
-            print(f"✅ Got booking ref: {booking_ref}")
-            
-            # STEP 2: Use booking ref to get price
-            step2_payload = {
-                "bookingRef": booking_ref,
-                "payload": {
-                    "postCode": postcode,
-                    "service": service,
-                    "type": type
-                }
+            # Send the required fields directly to the Flask app
+            payload = {
+                "postcode": postcode,
+                "service": service,
+                "type": type
             }
             
             price_url = f"{self.koyeb_url}/api/wasteking-get-price"
-            step2_response = self._send_koyeb_webhook(price_url, step2_payload)
+            response = self._send_koyeb_webhook(price_url, payload)
             
-            if not step2_response or not step2_response.get("success"):
+            if not response or not response.get("success"):
                 return {"success": False, "message": "No pricing data"}
 
-            price = step2_response.get('price', '')
-            supplier_phone = step2_response.get('real_supplier_phone', "+447823656907")
-            supplier_name = step2_response.get('supplier_name', '')
+            # Extract the data from Flask app response
+            booking_ref = response.get('booking_ref')
+            price = response.get('price', '')
             
-            print(f"📞 Real supplier from API: {supplier_phone}")
+            # The Flask app doesn't return supplier info, so use defaults
+            supplier_phone = "+447823656907"  # Default supplier phone
+            supplier_name = "Local Supplier"
+            
+            print(f"✅ Got price: {price} for booking: {booking_ref}")
             
             return {
                 "success": True,
@@ -140,16 +126,16 @@ class SMPAPITool(BaseTool):
             }
                 
         except Exception as e:
-            self._log_error("Marketplace request failed", e)
+            self._log_error("Pricing request failed", e)
             return {
                 "success": False,
-                "message": "Marketplace request failed",
+                "message": "Pricing request failed",
                 "error": str(e)
             }
     
     def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
                              postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Create booking quote - Send actual data to Koyeb create_booking_quote endpoint"""
+        """Create booking quote - Send actual data to Koyeb confirm_booking endpoint"""
         
         # Validate required parameters
         if not type:
@@ -168,24 +154,22 @@ class SMPAPITool(BaseTool):
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
         try:
-            # Create actual data payload (keep original WasteKing JSON structure)
+            # Create the payload that matches what the Flask app expects
             data_payload = {
-                "bookingRef": kwargs.get("booking_ref"),
-                "payload": {
-                    "postCode": postcode,
-                    "service": service,
-                    "type": type,
-                    "firstname": kwargs.get("firstName", ""),  # lowercase as per curl
-                    "Phone": kwargs.get("phone", ""),  # uppercase P as per curl
-                    "lastName": kwargs.get("lastName", ""),
-                    "emailAddress": kwargs.get("emailAddress", ""),
-                    "time": kwargs.get("time", ""),
-                    "date": kwargs.get("date", ""),
-                    "extra_items": kwargs.get("extra_items", ""),
-                    "discount_applied": kwargs.get("discount_applied", False),
-                    "call_sid": kwargs.get("call_sid", ""),
-                    "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
-                }
+                "booking_ref": kwargs.get("booking_ref"),
+                "postcode": postcode,
+                "service": service,
+                "type": type,
+                "firstName": kwargs.get("firstName", ""),
+                "phone": kwargs.get("phone", ""),
+                "lastName": kwargs.get("lastName", ""),
+                "email": kwargs.get("emailAddress", ""),
+                "date": kwargs.get("date", ""),
+                "time": kwargs.get("time", ""),
+                "extra_items": kwargs.get("extra_items", ""),
+                "discount_applied": kwargs.get("discount_applied", False),
+                "call_sid": kwargs.get("call_sid", ""),
+                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
             }
             
             # Send to Koyeb endpoint
@@ -193,11 +177,11 @@ class SMPAPITool(BaseTool):
             response_data = self._send_koyeb_webhook(url, data_payload)
             
             if not response_data or not response_data.get("success"):
-                return {"success": False, "message": "No payment link available"}
+                return {"success": False, "message": "Booking confirmation failed"}
 
             # Extract data from response
             payment_link = response_data.get('payment_link', '')
-            final_price = response_data.get('final_price', '')  # Remove dummy default
+            final_price = response_data.get('price', '')
             booking_ref = response_data.get('booking_ref', kwargs.get('booking_ref'))
 
             return {
@@ -225,38 +209,31 @@ class SMPAPITool(BaseTool):
         
         try:
             data_payload = {
-                "bookingRef": quote_id,
-                "action": "quote",
-                "call_sid": call_sid or "",
+                "quote_id": quote_id,
                 "customer_phone": customer_phone,
-                "amount": amount or "",
+                "call_sid": call_sid or "",
+                "amount": amount or "1",  # Default to £1 for testing
                 "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
             }
             
             url = f"{self.koyeb_url}/api/send-payment-sms"
             response_data = self._send_koyeb_webhook(url, data_payload)
             
-            if not response_data or not response_data.get("success"):
+            if not response_data or response_data.get("status") != "success":
                 return {"success": False, "error": "Payment processing failed"}
-
-            payment_link = response_data.get('payment_link', '')
-            final_price = response_data.get('final_price', amount or '')
-            sms_sent = response_data.get('sms_sent', False)
 
             return {
                 "success": True,
                 "message": "Payment link sent to customer",
                 "booking_ref": quote_id,
-                "payment_link": payment_link,
-                "final_price": final_price,
+                "payment_link": response_data.get("payment_link_used", ""),
+                "final_price": response_data.get("amount", amount or "1"),
                 "customer_phone": customer_phone,
-                "sms_sent": sms_sent
+                "sms_sent": True
             }
                 
         except Exception as e:
             return {"success": False, "error": f"Payment processing failed: {str(e)}"}
-    
-
 
     def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
                       booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
@@ -338,13 +315,13 @@ class SMPAPITool(BaseTool):
         if not pricing_result.get("success"):
             return pricing_result
         
-        supplier_phone = pricing_result.get("real_supplier_phone")  # Get real supplier phone
+        supplier_phone = pricing_result.get("real_supplier_phone")
         supplier_name = pricing_result.get("supplier_name")
         
         if not supplier_phone:
             return {"success": False, "error": "No supplier phone number available"}
         
-        print(f"📞 Using real supplier phone for availability check: {supplier_phone}")
+        print(f"📞 Using supplier phone for availability check: {supplier_phone}")
         
         # Call supplier to check availability
         try:
@@ -355,7 +332,7 @@ class SMPAPITool(BaseTool):
             )
             
             call_result = caller.call_supplier_for_availability(
-                supplier_phone=supplier_phone,  # Use real supplier phone
+                supplier_phone=supplier_phone,
                 service_type=service,
                 postcode=postcode,
                 date=date or "ASAP"
@@ -364,7 +341,7 @@ class SMPAPITool(BaseTool):
             return {
                 "success": call_result.get("success", False),
                 "availability": "checking" if call_result.get("success") else "unavailable",
-                "message": f"Called {supplier_name or 'supplier'} to check availability",  # Handle empty supplier_name
+                "message": f"Called {supplier_name or 'supplier'} to check availability",
                 "booking_ref": pricing_result.get("booking_ref"),
                 "price": pricing_result.get("price"),
                 "supplier_phone": supplier_phone,
