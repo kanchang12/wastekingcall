@@ -31,6 +31,10 @@ class SMPAPITool(BaseTool):
             print(f"🔧 SMP API Tool called with action: {action}")
             print(f"🔧 Parameters: {kwargs}")
             
+            # Debug: Show service before processing
+            if 'service' in kwargs:
+                print(f"🔧 Original service: {kwargs['service']}")
+            
             if action == "get_pricing":
                 return self._get_pricing(**kwargs)
             elif action == "create_booking_quote":
@@ -64,20 +68,25 @@ class SMPAPITool(BaseTool):
         """Send actual data to Koyeb endpoint with GET and POST support"""
         try:
             self._log_with_timestamp(f"🔄 Sending {method} to Koyeb URL: {url}")
-            self._log_with_timestamp(f"🔄 Sending to Koyeb: {json.dumps(data_payload, indent=2)}")
+            self._log_with_timestamp(f"🔄 Data payload: {json.dumps(data_payload, indent=2)}")
             
             if method.upper() == "GET":
                 # For GET, send data as query parameters
+                print(f"🔄 GET Query parameters: {data_payload}")
                 response = requests.get(url, params=data_payload, timeout=30)
             else:
                 # For POST, send data as JSON
+                print(f"🔄 POST JSON body: {json.dumps(data_payload, indent=2)}")
                 response = requests.post(url, json=data_payload, timeout=30)
             
             self._log_with_timestamp(f"🔄 Koyeb {method} response status: {response.status_code}")
             self._log_with_timestamp(f"🔄 Koyeb {method} response text: {response.text}")
             
             if response.status_code in [200, 201]:
-                return response.json()
+                try:
+                    return response.json()
+                except json.JSONDecodeError:
+                    return {"success": False, "error": f"Invalid JSON response: {response.text}"}
             else:
                 return {"success": False, "error": f"Koyeb {method} failed with status {response.status_code}: {response.text}"}
                 
