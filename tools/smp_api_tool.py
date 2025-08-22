@@ -79,9 +79,8 @@ class SMPAPITool(BaseTool):
     
     def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
                     type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Get pricing - Send actual data to Koyeb wastekingmarketplace endpoint"""
+        """STEP 1: Get booking ref, STEP 2: Get price"""
         
-        # Validate required parameters
         if not postcode:
             return {"success": False, "error": "Missing required parameter: postcode"}
         if not service:
@@ -92,39 +91,41 @@ class SMPAPITool(BaseTool):
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
-            # Create actual data payload (keep original WasteKing JSON structure)
-            data_payload = {
+            # STEP 1: Get booking reference FIRST
+            step1_payload = {
                 "type": "chatbot",
-                "source": "wasteking.co.uk",
+                "source": "wasteking.co.uk"
+            }
+            
+            create_url = f"{self.koyeb_url}/api/wasteking-create-booking"  # Different endpoint for step 1
+            step1_response = self._send_koyeb_webhook(create_url, step1_payload)
+            
+            if not step1_response or not step1_response.get("booking_ref"):
+                return {"success": False, "message": "Failed to create booking"}
+                
+            booking_ref = step1_response.get("booking_ref")
+            print(f"✅ Got booking ref: {booking_ref}")
+            
+            # STEP 2: Use booking ref to get price
+            step2_payload = {
+                "bookingRef": booking_ref,
                 "payload": {
                     "postCode": postcode,
                     "service": service,
-                    "type": type,
-                    "firstName": kwargs.get("firstName", ""),
-                    "phone": kwargs.get("phone", ""),
-                    "lastName": kwargs.get("lastName", ""),
-                    "emailAddress": kwargs.get("emailAddress", ""),
-                    "date": kwargs.get("date", ""),
-                    "time": kwargs.get("time", ""),
-                    "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", ""),
-                    "call_sid": kwargs.get("call_sid", "")
+                    "type": type
                 }
             }
             
-            # Send to Koyeb endpoint (no filtering - keep all fields)
-            url = f"{self.koyeb_url}/api/wasteking-get-price"
-            response_data = self._send_koyeb_webhook(url, data_payload)
+            price_url = f"{self.koyeb_url}/api/wasteking-get-price"
+            step2_response = self._send_koyeb_webhook(price_url, step2_payload)
             
-            if not response_data or not response_data.get("success"):
+            if not step2_response or not step2_response.get("success"):
                 return {"success": False, "message": "No pricing data"}
 
-            # Extract data from response
-            booking_ref = response_data.get('booking_ref', '')
-            price = response_data.get('price', '')
-            supplier_phone = response_data.get('real_supplier_phone', "+447823656907")  # Keep supplier phone default
-            supplier_name = response_data.get('supplier_name', '')  # Remove default
+            price = step2_response.get('price', '')
+            supplier_phone = step2_response.get('real_supplier_phone', "+447823656907")
+            supplier_name = step2_response.get('supplier_name', '')
             
-            # Print real supplier number
             print(f"📞 Real supplier from API: {supplier_phone}")
             
             return {
@@ -211,11 +212,10 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": f"Booking quote failed: {str(e)}"}
     
-    def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
+        def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Send payment link to customer - Send actual data to Koyeb take_payment endpoint"""
+        """Send payment link to customer"""
         
-        # Validate required parameters
         if not customer_phone:
             return {"success": False, "error": "Missing required parameter: customer_phone"}
         if not quote_id:
@@ -224,26 +224,23 @@ class SMPAPITool(BaseTool):
         print(f"💳 Taking payment for quote {quote_id}")
         
         try:
-            # Create actual data payload (keep original WasteKing JSON structure)
             data_payload = {
                 "bookingRef": quote_id,
                 "action": "quote",
                 "call_sid": call_sid or "",
                 "customer_phone": customer_phone,
-                "amount": amount or "",  # Remove dummy default
+                "amount": amount or "",
                 "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
             }
             
-            # Send to Koyeb endpoint
             url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
             response_data = self._send_koyeb_webhook(url, data_payload)
             
             if not response_data or not response_data.get("success"):
                 return {"success": False, "error": "Payment processing failed"}
 
-            # Extract data from response
             payment_link = response_data.get('payment_link', '')
-            final_price = response_data.get('final_price', amount or '')  # Remove dummy default
+            final_price = response_data.get('final_price', amount or '')
             sms_sent = response_data.get('sms_sent', False)
 
             return {
