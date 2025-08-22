@@ -14,13 +14,13 @@ class SMPAPITool(BaseTool):
     WasteKing API for pricing, booking quotes, payment processing, and supplier calling.
     
     Required parameters for each action:
-    - get_pricing: postcode, service, type (e.g., postcode="LS14ED", service="skip-hire", type="8yd")
+    - get_pricing: postcode, service, type (e.g., postcode="[POSTCODE]", service="skip-hire", type="8yd")
     - create_booking_quote: postcode, service, type, firstName, phone
     - take_payment: call_sid, customer_phone, quote_id, amount
     - call_supplier: supplier_phone, supplier_name, booking_ref, message
     """
-    base_url: str = Field(default="https://wk-smp-api-dev.azurewebsites.net/")
-    access_token: str = Field(default="wk-KZPY-tGF-@d.Aby9fpvMC_VVWkX-GN.i7jCBhF3xceoFfhmawaNc.RH.G_-kwk8*")
+    base_url: str = Field(default=os.getenv('WASTEKING_BASE_URL', "https://wk-smp-api-dev.azurewebsites.net/"))
+    access_token: str = Field(default=os.getenv('WASTEKING_ACCESS_TOKEN', 'fallback_token'))
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         try:
