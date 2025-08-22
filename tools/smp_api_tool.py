@@ -8,7 +8,15 @@ from agents.elevenlabs_supplier_caller import ElevenLabsSupplierCaller
 
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
-    description: str = "WasteKing API for pricing, booking quotes, payment processing, and supplier calling"
+    description: str = """
+    WasteKing API for pricing, booking quotes, payment processing, and supplier calling.
+    
+    Required parameters for each action:
+    - get_pricing: postcode, service, type (e.g., postcode="LS1 4ED", service="mav", type="4yd")
+    - create_booking_quote: postcode, service, type, firstName, phone
+    - take_payment: call_sid, customer_phone, quote_id, amount
+    - call_supplier: supplier_phone, supplier_name, booking_ref, message
+    """
     base_url: str = Field(default="https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app/api/")
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
@@ -32,12 +40,19 @@ class SMPAPITool(BaseTool):
             print(f"❌ SMP API Error: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _get_pricing(self, postcode: str, service: str, type: str, **kwargs) -> Dict[str, Any]:
+    def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
+                    type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Get pricing from wasteking-get-price endpoint"""
-        print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
-        if not all([postcode, service, type]):
-            return {"success": False, "error": "Missing required fields: postcode, service, type"}
+        # Validate required parameters
+        if not postcode:
+            return {"success": False, "error": "Missing required parameter: postcode"}
+        if not service:
+            return {"success": False, "error": "Missing required parameter: service"}
+        if not type:
+            return {"success": False, "error": "Missing required parameter: type"}
+            
+        print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
             payload = {
@@ -83,12 +98,19 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": f"Pricing request failed: {str(e)}"}
     
-    def _create_booking_quote(self, type: str, service: str, postcode: str, **kwargs) -> Dict[str, Any]:
+    def _create_booking_quote(self, type: Optional[str] = None, service: Optional[str] = None, 
+                             postcode: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Create booking quote with payment link"""
-        print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
-        if not all([type, service, postcode]):
-            return {"success": False, "error": "Missing required fields: type, service, postcode"}
+        # Validate required parameters
+        if not type:
+            return {"success": False, "error": "Missing required parameter: type"}
+        if not service:
+            return {"success": False, "error": "Missing required parameter: service"}
+        if not postcode:
+            return {"success": False, "error": "Missing required parameter: postcode"}
+            
+        print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
         try:
             payload = {
@@ -124,12 +146,21 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": f"Booking quote failed: {str(e)}"}
     
-    def _take_payment(self, call_sid: str, customer_phone: str, quote_id: str, amount: str, **kwargs) -> Dict[str, Any]:
+    def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
+                     quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Send payment link to customer"""
-        print(f"💳 Taking payment for quote {quote_id}, amount £{amount}")
         
-        if not all([call_sid, customer_phone, quote_id, amount]):
-            return {"success": False, "error": "Missing required fields: call_sid, customer_phone, quote_id, amount"}
+        # Validate required parameters
+        if not call_sid:
+            return {"success": False, "error": "Missing required parameter: call_sid"}
+        if not customer_phone:
+            return {"success": False, "error": "Missing required parameter: customer_phone"}
+        if not quote_id:
+            return {"success": False, "error": "Missing required parameter: quote_id"}
+        if not amount:
+            return {"success": False, "error": "Missing required parameter: amount"}
+            
+        print(f"💳 Taking payment for quote {quote_id}, amount £{amount}")
         
         try:
             payload = {
@@ -156,8 +187,20 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": f"Payment processing failed: {str(e)}"}
     
-    def _call_supplier(self, supplier_phone: str, supplier_name: str, booking_ref: str, message: str, **kwargs) -> Dict[str, Any]:
+    def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
+                      booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Makes actual call to supplier using ElevenLabs"""
+        
+        # Validate required parameters
+        if not supplier_phone:
+            return {"success": False, "error": "Missing required parameter: supplier_phone"}
+        if not supplier_name:
+            return {"success": False, "error": "Missing required parameter: supplier_name"}
+        if not booking_ref:
+            return {"success": False, "error": "Missing required parameter: booking_ref"}
+        if not message:
+            return {"success": False, "error": "Missing required parameter: message"}
+            
         print(f"📞 Calling supplier {supplier_phone}")
         
         try:
@@ -206,10 +249,20 @@ class SMPAPITool(BaseTool):
                 "call_made": False
             }
     
-    def _check_supplier_availability(self, postcode: str, service: str, type_: str, date: str = None, **kwargs) -> Dict[str, Any]:
+    def _check_supplier_availability(self, postcode: Optional[str] = None, service: Optional[str] = None, 
+                                   type_: Optional[str] = None, date: str = None, **kwargs) -> Dict[str, Any]:
         """Check supplier availability and call them if needed"""
+        
+        # Validate required parameters
+        if not postcode:
+            return {"success": False, "error": "Missing required parameter: postcode"}
+        if not service:
+            return {"success": False, "error": "Missing required parameter: service"}
+        if not type_:
+            return {"success": False, "error": "Missing required parameter: type_"}
+            
         # First get pricing to get supplier details
-        pricing_result = self._get_pricing(postcode=postcode, service=service, type_=type_, **kwargs)
+        pricing_result = self._get_pricing(postcode=postcode, service=service, type=type_, **kwargs)
         
         if not pricing_result.get("success"):
             return pricing_result
