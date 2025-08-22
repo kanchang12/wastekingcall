@@ -33,17 +33,14 @@ class AgentOrchestrator:
         print(f"📋 Incoming Context: {context}")
         
         try:
-            # Load existing conversation state
-            conversation_state = self._load_conversation_state(conversation_id)
+            # SKIP STATE LOADING - just use incoming context
+            conversation_state = context.copy() if context else {}
+            conversation_state['conversation_id'] = conversation_id
             
             # Extract and update state from current message
             self._extract_and_update_state(message, conversation_state)
             
-            # Merge with incoming context
-            if context:
-                conversation_state.update(context)
-            
-            print(f"🔄 Updated Conversation State: {conversation_state}")
+            print(f"🔄 SIMPLE Conversation State: {conversation_state}")
             
             # Determine which agent should handle this message
             agent_choice, routing_reason = self._determine_agent(message, conversation_state)
@@ -64,8 +61,8 @@ class AgentOrchestrator:
             # Process message with the selected agent, passing full state as context
             response = agent.process_message(message, conversation_state)
             
-            # Save updated conversation state
-            self._save_conversation_state(conversation_id, conversation_state, message, response, agent_choice)
+            # SKIP COMPLEX STATE SAVING - just log
+            print(f"✅ Processed with {agent_choice}, response: {response[:100]}...")
             
             return {
                 "success": True,
@@ -140,9 +137,9 @@ class AgentOrchestrator:
         message_lower = message.lower()
         extracted = state.get('extracted_info', {})
         
-        # Extract postcode - BETTER REGEX for LS1480 format
+        # Extract postcode - NO SPACES EVER
         postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b',  # Standard format
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # Standard format
             r'\b(LS\d{4})\b',  # LS1480 format
             r'\b([A-Z]{1,2}\d{1,4})\b'  # Partial postcodes
         ]
@@ -150,7 +147,8 @@ class AgentOrchestrator:
         for pattern in postcode_patterns:
             postcode_match = re.search(pattern, message.upper())
             if postcode_match:
-                extracted['postcode'] = postcode_match.group(1).replace(' ', '')
+                # FORCE remove any spaces
+                extracted['postcode'] = postcode_match.group(1).replace(' ', '').replace('\t', '')
                 print(f"✅ FOUND POSTCODE: {extracted['postcode']}")
                 break
         
@@ -170,10 +168,10 @@ class AgentOrchestrator:
         
         # Extract name
         name_patterns = [
-            r'\bname\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', # My name is John Smith
-            r'\bmy\s+name\s+is\s+([A-Z][a-z]+)\b',
-            r'\bi\s+am\s+([A-Z][a-z]+)\b',
-            r'\b([A-Z][a-z]+)\b'
+            r'\bname\s+(\w+)\b',
+            r'\bname\s+is\s+(\w+)\b',
+            r'\bcustomer\s+(\w+)\b',
+            r'\bName\s+([A-Z][a-z]+)\b'
         ]
         
         for pattern in name_patterns:
@@ -296,6 +294,7 @@ class AgentOrchestrator:
             try:
                 state_json = json.dumps(state, default=str)
                 self.storage.set(f"conv_state_{conversation_id}", state_json)
+                print(f"💾 Saved state to storage for {conversation_id}")
             except Exception as e:
                 print(f"⚠️ Failed to save to storage: {e}")
     
@@ -304,7 +303,7 @@ class AgentOrchestrator:
         
         message_lower = message.lower()
         
-        # 1. EXPLICIT SERVICE MENTIONS (Highest Priority)
+        # 1. EXPLICIT SERVICE MENTIONS
         
         # Man & Van explicit requests
         if any(phrase in message_lower for phrase in [
@@ -312,7 +311,7 @@ class AgentOrchestrator:
         ]):
             return 'mav', 'explicit_mav_request'
         
-        # Skip hire explicit requests 
+        # Skip hire explicit requests  
         if any(phrase in message_lower for phrase in [
             'skip', 'skip hire', 'container', 'bin hire', 'waste container'
         ]):
@@ -324,27 +323,49 @@ class AgentOrchestrator:
         ]):
             return 'grab_hire', 'explicit_grab_request'
         
-        # 2. MATERIAL-BASED ROUTING (Prioritized to prevent loops)
+        # 2. CONTEXT-BASED ROUTING (prioritize existing service)
+        
+        if context:
+            # If we have a service already determined, continue with it unless explicitly changing
+            if context.get('service') or context.get('last_service'):
+                existing_service = context.get('service') or context.get('last_service')
+                
+                # Only switch if explicitly mentioned different service
+                switching_services = any(phrase in message_lower for phrase in [
+                    'man and van', 'man & van', 'mav', 'skip', 'skip hire', 'grab', 'grab hire'
+                ])
+                
+                if not switching_services:
+                    if existing_service in ['mav', 'man_van']:
+                        return 'mav', 'continuing_mav_conversation'
+                    elif existing_service in ['skip', 'skip_hire']:
+                        return 'skip_hire', 'continuing_skip_conversation'
+                    elif existing_service in ['grab', 'grab_hire']:
+                        return 'grab_hire', 'continuing_grab_conversation'
+        
+        # 3. MATERIAL-BASED ROUTING
+        
         materials = self._extract_materials(message)
+        
+        # Check extracted waste type from state
         if context and context.get('waste_type'):
             materials.extend(context['waste_type'].split(', '))
         
-        # Heavy materials = GRAB
-        heavy_materials = [
-            'soil', 'muck', 'rubble', 'concrete', 'brick', 'bricks', 'stone', 
-            'sand', 'gravel', 'hardcore', 'mortar', 'cement', 'asphalt', 'renovation'
-        ]
-        if any(material in materials for material in heavy_materials):
-            return 'grab_hire', 'heavy_materials_detected'
-        
-        # Light items = Man & Van
+        # Light items that COULD be man & van
         light_items = [
             'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 'wardrobe',
             'appliances', 'fridge', 'freezer', 'washing machine', 'dishwasher',
             'bags', 'clothes', 'books', 'boxes', 'household goods', 'office furniture'
         ]
+        
         if any(item in materials for item in light_items):
-            return 'mav', 'light_items_suitable_for_mav'
+            # Check if NO heavy items mentioned
+            heavy_items = [
+                'brick', 'bricks', 'concrete', 'soil', 'rubble', 'stone', 'sand', 
+                'gravel', 'construction', 'building', 'demolition', 'hardcore'
+            ]
+            if not any(item in materials for item in heavy_items):
+                return 'mav', 'light_items_suitable_for_mav'
         
         # Traditional skip waste
         skip_waste = [
@@ -354,7 +375,16 @@ class AgentOrchestrator:
         if any(waste in message_lower for waste in skip_waste):
             return 'skip_hire', 'traditional_skip_waste'
         
-        # 3. VOLUME/SIZE INDICATORS
+        # 4. HEAVY MATERIALS = GRAB
+        
+        heavy_materials = [
+            'soil', 'muck', 'rubble', 'concrete', 'brick', 'bricks', 'stone', 
+            'sand', 'gravel', 'hardcore', 'mortar', 'cement', 'asphalt', 'renovation'
+        ]
+        if any(material in materials for material in heavy_materials):
+            return 'grab_hire', 'heavy_materials_detected'
+        
+        # 5. VOLUME/SIZE INDICATORS
         
         large_volume_indicators = [
             'loads of', 'lots of', 'large amount', 'truck full', 'lorry load', 
@@ -363,18 +393,11 @@ class AgentOrchestrator:
         if any(indicator in message_lower for indicator in large_volume_indicators):
             return 'grab_hire', 'large_volume_job'
         
-        # 4. SKIP SIZE INDICATORS
+        # 6. SKIP SIZE INDICATORS
         if any(pattern in message_lower for pattern in [r'\d+\s*ya?rd', r'\d+yd']):
             return 'skip_hire', 'skip_size_mentioned'
         
-        # 5. CONTEXT-BASED ROUTING (last resort before fallback)
-        if context:
-            # If we have a service already determined, continue with it
-            if context.get('service') or context.get('last_service'):
-                existing_service = context.get('service') or context.get('last_service')
-                return existing_service, 'continuing_conversation_by_context'
-        
-        # 6. DEFAULT FALLBACK - GRAB HANDLES EVERYTHING ELSE
+        # 7. DEFAULT FALLBACK - GRAB HANDLES EVERYTHING ELSE
         return 'grab_hire', 'default_grab_handles_all'
     
     def _extract_materials(self, message: str) -> List[str]:
