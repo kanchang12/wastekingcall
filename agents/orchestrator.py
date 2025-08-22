@@ -142,7 +142,7 @@ class AgentOrchestrator:
         
         # Extract postcode - BETTER REGEX for LS1480 format
         postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b',  # Standard format
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # Standard format
             r'\b(LS\d{4})\b',  # LS1480 format
             r'\b([A-Z]{1,2}\d{1,4})\b'  # Partial postcodes
         ]
