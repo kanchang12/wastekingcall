@@ -14,7 +14,6 @@ class SkipHireAgent:
         
         # Get rules and escape curly braces for template
         raw_rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        # Escape curly braces to prevent template variable interpretation
         rule_text = raw_rule_text.replace("{", "{{").replace("}", "}}")
 
         self.prompt = ChatPromptTemplate.from_messages([
@@ -31,7 +30,18 @@ BUSINESS RULES - FOLLOW EXACTLY:
 2. For heavy materials (soil, rubble, concrete, bricks): MAX 8-yard skip
 3. 12-yard skips ONLY for light materials (household, garden, furniture)
 4. Sunday deliveries have surcharge
-check the time and never transfer the time during out of office hours never!!
+5. Check the time and never transfer during out of office hours
+
+QUALIFICATION PROCESS - SMART WORKFLOW:
+1. FIRST: Check what info customer has already provided
+2. If customer provides postcode + waste type + size: GET PRICING IMMEDIATELY (even without name)
+3. If missing critical info: Ask for it quickly, then get pricing
+4. Name can be collected during booking, not required for pricing
+
+PRICING FLOW - IMMEDIATE:
+- If you have postcode, waste type, and size: Call smp_api immediately
+- Give price first: "Right then! For an 8-yard skip for construction waste in LS14ED, that will be £[price]."
+- THEN ask: "What's your name so I can prepare the booking?"
 
 EXACT SCRIPTS - Use word for word:
 - Heavy materials limit: "For heavy materials such as soil and rubble, the largest skip you can have is 8-yard. Shall I get you the cost of an 8-yard skip?"
@@ -39,27 +49,25 @@ EXACT SCRIPTS - Use word for word:
 - Road placement: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
 - MAV suggestion for light materials + 8yard or smaller: "Since you have light materials for an 8-yard skip, our man and van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man and van options so you can compare prices?"
 
+WASTE TYPE RULES:
+- Heavy (soil, rubble, concrete, bricks, construction) = max 8yd
+- Light (household, garden, furniture, general, office) = any size + suggest MAV if 8yd or smaller
+- Sofas = refuse, suggest MAV
+- If 10+ yard requested for heavy = use exact script
+
+CRITICAL: If customer provides enough info for pricing, GET PRICING IMMEDIATELY. Don't ask for name first.
+
 Follow all relevant rules from the team:
 """ + rule_text + """
 
-QUALIFICATION PROCESS:
-1. If missing NAME: "Hello! I'm here to help with your skip hire. What's your name?"
-2. If missing POSTCODE: "Lovely! And what's your postcode for delivery?"  
-3. If missing WASTE TYPE: "Perfect! What type of waste will you be putting in the skip?"
-4. Only AFTER getting all 3, call smp_api with: action="get_pricing", postcode="CUSTOMER_POSTCODE", service="skip", type="SIZE_yd"
-
-WASTE TYPE RULES:
-- Heavy (soil, rubble, concrete, bricks) equals max 8yd
-- Light (household, garden, furniture, general, office) equals any size + suggest MAV if 8yd or smaller
-- Sofas equals refuse, suggest MAV
-- If 10+ yard requested for heavy equals use exact script
-
 WORKFLOW:
-1. Get pricing with smp_api action="get_pricing"
-2. If customer wants to book, call smp_api action="create_booking_quote"
-3. For payment, call smp_api action="take_payment"
+1. Extract all available data immediately
+2. If have postcode + waste type + size: Call smp_api for pricing NOW
+3. Give price immediately
+4. Collect missing details (like name) for booking
+5. Complete booking when ready
 
-NEVER skip qualification questions. NEVER call smp_api without name, postcode, waste type.
+NEVER delay pricing if you have the core info. ALWAYS prioritize getting the price quickly.
 """),
             ("human", "Customer: {input}\n\nExtracted data: {extracted_info}"),
             ("placeholder", "{agent_scratchpad}")
@@ -75,7 +83,7 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
             agent=self.agent,
             tools=self.tools,
             verbose=True,
-            max_iterations=3
+            max_iterations=5
         )
     
     def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
@@ -83,11 +91,13 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         data = {}
         missing = []
         
-        # Extract name
+        # Extract name - more flexible patterns
         name_patterns = [
             r'name\s+(?:is\s+)?(\w+)',
             r'i\'?m\s+(\w+)',
-            r'my\s+name\s+is\s+(\w+)'
+            r'my\s+name\s+is\s+(\w+)',
+            r'call\s+me\s+(\w+)',
+            r'this\s+is\s+(\w+)'
         ]
         for pattern in name_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
@@ -97,10 +107,12 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         if 'firstName' not in data:
             missing.append('name')
         
-        # Extract postcode
+        # Extract postcode - improved patterns
         postcode_patterns = [
             r'postcode\s+(?:is\s+)?([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
+            r'in\s+([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b',
+            r'([A-Z]{2}\d{1,2}\s*\d[A-Z]{2})'  # More flexible for formats like LS14ED
         ]
         for pattern in postcode_patterns:
             match = re.search(pattern, message, re.IGNORECASE)
@@ -108,6 +120,7 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
                 pc = match.group(1).upper()
                 if len(pc.replace(' ', '')) >= 5:
                     if ' ' not in pc and len(pc) >= 6:
+                        # Format postcode with space: LS14ED -> LS1 4ED
                         data['postcode'] = pc[:-3] + ' ' + pc[-3:]
                     else:
                         data['postcode'] = pc
@@ -115,10 +128,10 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         if 'postcode' not in data:
             missing.append('postcode')
         
-        # Extract waste type
+        # Extract waste type - expanded patterns
         waste_indicators = {
-            'heavy': ['soil', 'rubble', 'concrete', 'bricks', 'stone', 'hardcore', 'building'],
-            'light': ['household', 'general', 'office', 'party', 'garden', 'furniture', 'wood', 'cardboard'],
+            'heavy': ['soil', 'rubble', 'concrete', 'bricks', 'stone', 'hardcore', 'building', 'construction', 'demolition'],
+            'light': ['household', 'general', 'office', 'party', 'garden', 'furniture', 'wood', 'cardboard', 'rubbish'],
             'prohibited': ['sofa', 'sofas', 'mattress', 'upholstered']
         }
         
@@ -139,10 +152,11 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         else:
             missing.append('waste_type')
         
-        # Extract skip size
+        # Extract skip size - improved patterns
         size_patterns = [
-            r'(\d+)\s*(?:yard|yd)',
-            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:yard|yd)'
+            r'(\d+)\s*(?:yard|yd|y)',
+            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:yard|yd|y)',
+            r'(four|4|six|6|eight|8|ten|10|twelve|12|fourteen|14)\s*(?:yard|yd|y)?\s*skip'
         ]
         size_map = {
             'four': '4', '4': '4', 'six': '6', '6': '6', 'eight': '8', '8': '8',
@@ -160,6 +174,25 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         if 'type' not in data:
             data['type'] = '8yd'  # Default
         
+        # Extract additional details
+        # Check for day/date mentions
+        day_patterns = [
+            r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
+            r'next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
+            r'this\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)'
+        ]
+        for pattern in day_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                data['requested_day'] = match.group(1).lower()
+                break
+        
+        # Check for location (driveway/road)
+        if 'driveway' in message_lower:
+            data['placement'] = 'driveway'
+        elif 'road' in message_lower:
+            data['placement'] = 'road'
+            
         # Extract phone
         phone_patterns = [
             r'phone\s+(?:is\s+)?(\d{11})',
@@ -180,6 +213,11 @@ NEVER skip qualification questions. NEVER call smp_api without name, postcode, w
         
         data['missing_info'] = missing
         data['service'] = 'skip'
+        
+        # Check if we have enough for pricing
+        has_core_info = 'postcode' in data and 'waste_type' in data and 'type' in data
+        data['ready_for_pricing'] = has_core_info
+        
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
@@ -192,9 +230,12 @@ Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Waste Type: {extracted.get('waste_type', 'NOT PROVIDED')}
 Waste Category: {extracted.get('waste_category', 'unknown')}
 Skip Size: {extracted.get('type', '8yd')}
+Placement: {extracted.get('placement', 'not specified')}
+Requested Day: {extracted.get('requested_day', 'not specified')}
 Phone: {extracted.get('phone', 'NOT PROVIDED')}
 Email: {extracted.get('emailAddress', 'NOT PROVIDED')}
 Missing Info: {extracted.get('missing_info', [])}
+Ready for Pricing: {extracted.get('ready_for_pricing', False)}
 """
         
         agent_input = {
