@@ -92,25 +92,26 @@ class SMPAPITool(BaseTool):
         print(f"💰 Getting pricing for {service} {type} in {postcode}")
         
         try:
-            # Create actual data payload (not webhook structure)
+            # Create actual data payload (keep original WasteKing JSON structure)
             data_payload = {
-                "type": type,
-                "postcode": postcode,
-                "service": service,
-                "firstName": kwargs.get("firstName", ""),
-                "phone": kwargs.get("phone", ""),
-                "lastName": kwargs.get("lastName", ""),
-                "emailAddress": kwargs.get("emailAddress", ""),
-                "date": kwargs.get("date", ""),
-                "time": kwargs.get("time", ""),
-                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", ""),
-                "call_sid": kwargs.get("call_sid", "")
+                "type": "chatbot",
+                "source": "wasteking.co.uk",
+                "payload": {
+                    "postCode": postcode,
+                    "service": service,
+                    "type": type,
+                    "firstName": kwargs.get("firstName", ""),
+                    "phone": kwargs.get("phone", ""),
+                    "lastName": kwargs.get("lastName", ""),
+                    "emailAddress": kwargs.get("emailAddress", ""),
+                    "date": kwargs.get("date", ""),
+                    "time": kwargs.get("time", ""),
+                    "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", ""),
+                    "call_sid": kwargs.get("call_sid", "")
+                }
             }
             
-            # Remove empty values
-            data_payload = {k: v for k, v in data_payload.items() if v}
-            
-            # Send to Koyeb endpoint
+            # Send to Koyeb endpoint (no filtering - keep all fields)
             url = f"{self.koyeb_url}/api/wasteking-get-price"
             response_data = self._send_koyeb_webhook(url, data_payload)
             
@@ -119,9 +120,9 @@ class SMPAPITool(BaseTool):
 
             # Extract data from response
             booking_ref = response_data.get('booking_ref', '')
-            price = response_data.get('price', '0')
-            supplier_phone = response_data.get('real_supplier_phone', "+447823656907")
-            supplier_name = response_data.get('supplier_name', "Default Supplier")
+            price = response_data.get('price', '')
+            supplier_phone = response_data.get('real_supplier_phone', "+447823656907")  # Keep supplier phone default
+            supplier_name = response_data.get('supplier_name', '')  # Remove default
             
             # Print real supplier number
             print(f"📞 Real supplier from API: {supplier_phone}")
@@ -166,26 +167,25 @@ class SMPAPITool(BaseTool):
         print(f"📋 Creating booking quote for {service} {type} in {postcode}")
         
         try:
-            # Create actual data payload (not webhook structure)
+            # Create actual data payload (keep original WasteKing JSON structure)
             data_payload = {
-                "type": type,
-                "service": service,
-                "postcode": postcode,
-                "firstName": kwargs.get("firstName", ""),
-                "lastName": kwargs.get("lastName", ""),
-                "phone": kwargs.get("phone", ""),
-                "emailAddress": kwargs.get("emailAddress", ""),
-                "time": kwargs.get("time", ""),
-                "date": kwargs.get("date", ""),
-                "extra_items": kwargs.get("extra_items", ""),
-                "discount_applied": kwargs.get("discount_applied", False),
-                "call_sid": kwargs.get("call_sid", ""),
-                "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", ""),
-                "booking_ref": kwargs.get("booking_ref", "")
+                "bookingRef": kwargs.get("booking_ref"),
+                "payload": {
+                    "postCode": postcode,
+                    "service": service,
+                    "type": type,
+                    "firstname": kwargs.get("firstName", ""),  # lowercase as per curl
+                    "Phone": kwargs.get("phone", ""),  # uppercase P as per curl
+                    "lastName": kwargs.get("lastName", ""),
+                    "emailAddress": kwargs.get("emailAddress", ""),
+                    "time": kwargs.get("time", ""),
+                    "date": kwargs.get("date", ""),
+                    "extra_items": kwargs.get("extra_items", ""),
+                    "discount_applied": kwargs.get("discount_applied", False),
+                    "call_sid": kwargs.get("call_sid", ""),
+                    "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
+                }
             }
-            
-            # Remove empty values
-            data_payload = {k: v for k, v in data_payload.items() if v}
             
             # Send to Koyeb endpoint
             url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
@@ -196,7 +196,7 @@ class SMPAPITool(BaseTool):
 
             # Extract data from response
             payment_link = response_data.get('payment_link', '')
-            final_price = response_data.get('final_price', '0')
+            final_price = response_data.get('final_price', '')  # Remove dummy default
             booking_ref = response_data.get('booking_ref', kwargs.get('booking_ref'))
 
             return {
@@ -211,7 +211,7 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": f"Booking quote failed: {str(e)}"}
     
-    def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
+        def _take_payment(self, call_sid: Optional[str] = None, customer_phone: Optional[str] = None, 
                      quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Send payment link to customer - Send actual data to Koyeb take_payment endpoint"""
         
@@ -224,17 +224,15 @@ class SMPAPITool(BaseTool):
         print(f"💳 Taking payment for quote {quote_id}")
         
         try:
-            # Create actual data payload (not webhook structure)
+            # Create actual data payload (keep original WasteKing JSON structure)
             data_payload = {
+                "bookingRef": quote_id,
+                "action": "quote",
                 "call_sid": call_sid or "",
                 "customer_phone": customer_phone,
-                "quote_id": quote_id,
-                "amount": amount or "50",
+                "amount": amount or "",  # Remove dummy default
                 "elevenlabs_conversation_id": kwargs.get("elevenlabs_conversation_id", "")
             }
-            
-            # Remove empty values
-            data_payload = {k: v for k, v in data_payload.items() if v}
             
             # Send to Koyeb endpoint
             url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
@@ -245,7 +243,7 @@ class SMPAPITool(BaseTool):
 
             # Extract data from response
             payment_link = response_data.get('payment_link', '')
-            final_price = response_data.get('final_price', amount or '50')
+            final_price = response_data.get('final_price', amount or '')  # Remove dummy default
             sms_sent = response_data.get('sms_sent', False)
 
             return {
@@ -262,54 +260,7 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": f"Payment processing failed: {str(e)}"}
     
 
-    def _send_payment_sms(self, booking_ref: str, phone: str, payment_link: str, amount: str):
-        """Send payment SMS via Twilio - EXACTLY like Flask code"""
-        try:
-            from twilio.rest import Client
-            
-            # Clean and format phone number - EXACTLY like Flask code
-            if phone.startswith('0'):
-                phone = f"+44{phone[1:]}"
-            elif phone.startswith('44'):
-                phone = f"+{phone}"
-            elif not phone.startswith('+'):
-                phone = f"+44{phone}"
-                
-            phone_pattern = r'^\+44\d{9,10}$'
-            if not re.match(phone_pattern, phone):
-                self._log_with_timestamp(f"❌ Invalid UK phone number format: {phone}")
-                return {"success": False, "message": "Invalid UK phone number format"}
-            
-            # Create SMS message - EXACTLY like Flask code
-            TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
-            TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-            TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
-            
-            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            message_body = f"""Waste King Payment
-Amount: £{amount}
-Reference: {booking_ref}
 
-Pay securely: {payment_link}
-
-After payment, you'll get confirmation.
-Thank you!"""
-            
-            # Send SMS
-            message = client.messages.create(
-                body=message_body,
-                from_=TWILIO_PHONE_NUMBER,
-                to=phone
-            )
-            
-            self._log_with_timestamp(f"✅ SMS sent to {phone} for booking {booking_ref} with final amount £{amount}. SID: {message.sid}")
-            
-            return {"success": True, "message": "SMS sent successfully", "sms_sid": message.sid}
-            
-        except Exception as e:
-            self._log_error("Failed to send payment SMS", e)
-            return {"success": False, "message": str(e)}
-    
     def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
                       booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Makes actual call to supplier using ElevenLabs"""
@@ -416,7 +367,7 @@ Thank you!"""
             return {
                 "success": call_result.get("success", False),
                 "availability": "checking" if call_result.get("success") else "unavailable",
-                "message": f"Called {supplier_name} to check availability",
+                "message": f"Called {supplier_name or 'supplier'} to check availability",  # Handle empty supplier_name
                 "booking_ref": pricing_result.get("booking_ref"),
                 "price": pricing_result.get("price"),
                 "supplier_phone": supplier_phone,
