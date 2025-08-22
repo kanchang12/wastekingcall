@@ -10,9 +10,14 @@ class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
+        self.rules_processor = RulesProcessor()
+        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
+        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
         
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Skip Hire agent. Be FAST and DIRECT.
+
+CRITICAL: NEVER ASK FOR DATA ALREADY PROVIDED IN CONTEXT
 
 RULES:
 - If you have postcode + waste type: IMMEDIATELY call smp_api
@@ -25,8 +30,22 @@ Has postcode + waste → Call smp_api(action="get_pricing", postcode=X, service=
 Missing postcode → "I need your postcode for pricing"
 Missing waste type → "What type of waste do you have?"
 
-Be direct. Get price. No chat."""),
-            ("human", "Customer: {input}\n\nI have:\nPostcode: {postcode}\nWaste: {waste_type}\nSize: {size}"),
+Be direct. Get price. No chat. NEVER GIVE FAKE PRICES!
+
+Follow team rules:
+""" + rule_text + """
+
+CRITICAL: Call smp_api with service="skip" when you have postcode + waste."""),
+            ("human", """Customer: {input}
+
+CONTEXT DATA (DON'T ASK FOR THIS AGAIN):
+Postcode: {postcode}
+Waste: {waste_type}
+Size: {size}
+Name: {name}
+Phone: {phone}
+
+Don't ask for data you already have!"""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -34,79 +53,59 @@ Be direct. Get price. No chat."""),
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=2)
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        # Get data from message and context
-        postcode = self._get_postcode(message, context)
-        waste_type = self._get_waste_type(message, context)
-        size = self._get_size(message, context)
+        # Get data from context first, then message
+        extracted = context.get('extracted_info', {}) if context else {}
         
-        print(f"🔧 SKIP DATA: postcode={postcode}, waste={waste_type}, size={size}")
+        postcode = (context.get('postcode') if context else None) or extracted.get('postcode') or self._get_postcode(message) or "NOT PROVIDED"
+        waste_type = (context.get('waste_type') if context else None) or extracted.get('waste_type') or self._get_waste_type(message) or "NOT PROVIDED"
+        size = (context.get('size') if context else None) or extracted.get('size') or self._get_size(message) or "8yd"
+        name = (context.get('name') if context else None) or extracted.get('name') or "NOT PROVIDED"
+        phone = (context.get('phone') if context else None) or extracted.get('phone') or "NOT PROVIDED"
+        
+        print(f"🔧 SKIP HIRE AGENT:")
+        print(f"   📍 Postcode: {postcode}")
+        print(f"   🗑️ Waste: {waste_type}")
+        print(f"   📦 Size: {size}")
         
         # Check if ready for API call
-        if postcode and postcode != "NOT PROVIDED" and waste_type and waste_type != "NOT PROVIDED":
+        if postcode != "NOT PROVIDED" and waste_type != "NOT PROVIDED":
             print(f"🔧 READY FOR API - calling immediately")
             
             agent_input = {
                 "input": message,
-                "postcode": postcode.replace(' ', ''),  # Remove spaces for API
+                "postcode": postcode.replace(' ', ''),
                 "waste_type": waste_type,
                 "size": size,
-                "action": "get_pricing",
-                "service": "skip"
+                "name": name,
+                "phone": phone
             }
             
             response = self.executor.invoke(agent_input)
             return response["output"]
         
         # Missing data - ask directly
-        if not postcode or postcode == "NOT PROVIDED":
+        if postcode == "NOT PROVIDED":
             return "I need your postcode to get skip hire pricing. What's your postcode?"
         
-        if not waste_type or waste_type == "NOT PROVIDED":
+        if waste_type == "NOT PROVIDED":
             return "What type of waste do you have? (construction, garden, household, etc.)"
         
         return "Let me get you a skip hire quote."
     
-    def _get_postcode(self, message: str, context: Dict) -> str:
-        # Check context first
-        if context and context.get('postcode'):
-            return context['postcode']
-        
-        # Extract from message
-        patterns = [r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})', r'postcode\s*:?\s*([A-Z0-9\s]+)']
+    def _get_postcode(self, message: str) -> str:
+        patterns = [r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})']
         for pattern in patterns:
-            matches = re.findall(pattern, message.upper())
-            for match in matches:
-                clean = match.strip().replace(' ', '')
-                if len(clean) >= 4 and any(c.isdigit() for c in clean) and any(c.isalpha() for c in clean):
-                    return clean
-        
-        return "NOT PROVIDED"
-    
-    def _get_waste_type(self, message: str, context: Dict) -> str:
-        # Check context first
-        if context and context.get('waste_type'):
-            return context['waste_type']
-        
-        # Extract from message
-        waste_types = ['construction', 'building', 'garden', 'household', 'mixed', 'bricks', 'concrete', 'soil', 'rubble', 'mortar']
-        found = []
-        message_lower = message.lower()
-        for waste in waste_types:
-            if waste in message_lower:
-                found.append(waste)
-        
-        return ', '.join(found) if found else "NOT PROVIDED"
-    
-    def _get_size(self, message: str, context: Dict) -> str:
-        # Check context first
-        if context and context.get('size'):
-            return context['size']
-        
-        # Extract from message
-        size_patterns = [r'(\d+)\s*(?:yard|yd)', r'(\d+)yd']
-        for pattern in size_patterns:
-            match = re.search(pattern, message.lower())
+            match = re.search(pattern, message.upper())
             if match:
-                return f"{match.group(1)}yd"
-        
-        return "8yd"  # Default
+                return match.group(1).replace(' ', '')
+        return ""
+    
+    def _get_waste_type(self, message: str) -> str:
+        waste_types = ['construction', 'building', 'garden', 'household', 'mixed', 'bricks', 'concrete', 'soil', 'rubble', 'mortar']
+        found = [waste for waste in waste_types if waste in message.lower()]
+        return ', '.join(found) if found else ""
+    
+    def _get_size(self, message: str) -> str:
+        pattern = r'(\d+)\s*(?:yard|yd)'
+        match = re.search(pattern, message.lower())
+        return f"{match.group(1)}yd" if match else "8yd"
