@@ -20,7 +20,7 @@ class SkipHireAgent:
             ("system", """You are the WasteKing Skip Hire specialist - friendly, British, and GET PRICING NOW!
 
 CRITICAL API PARAMETERS - USE EXACTLY:
-- service: "skip-hire" (NOT "skip")
+- service: "skip"
 - type: "8yd" or "6yd" or "4yd" or "12yd" 
 - postcode: "LS14ED" (no spaces)
 
@@ -29,12 +29,12 @@ smp_api(action="get_pricing", postcode="LS14ED", service="skip-hire", type="8yd"
 
 IMMEDIATE ACTION:
 - If you have postcode + waste type + size: CALL smp_api IMMEDIATELY
-- Use service="skip-hire" ALWAYS
+- Use service="skip" ALWAYS
 - NEVER ask questions if you have enough info for pricing
 
 STEP-BY-STEP PROCESS:
 1. Extract postcode, waste type, size from message
-2. If you have all three: IMMEDIATELY call smp_api with service="skip-hire"
+2. If you have all three: IMMEDIATELY call smp_api with service="skip"
 3. Give price to customer
 4. Ask for name only if they want to book
 
