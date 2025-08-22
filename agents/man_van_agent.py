@@ -1,5 +1,6 @@
 import json 
 import re
+import os
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
@@ -10,51 +11,76 @@ class ManVanAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        self.rules_processor = RulesProcessor()
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+        
+        # Load rules from PDF properly - CORRECT PATH
+        try:
+            # PDF path: data/rules/all rules.pdf (data and agents are same level)
+            pdf_path = os.path.join(os.path.dirname(__file__), "..", "data", "rules", "all rules.pdf")
+            print(f"Loading Man & Van rules from: {pdf_path}")
+            self.rules_processor = RulesProcessor(pdf_path=pdf_path)
+            # Get rules specifically for man_and_van
+            man_van_rules = self.rules_processor.get_rules_for_agent("man_and_van")
+            rule_text = json.dumps(man_van_rules, indent=2)
+            rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+            print(f"Loaded Man & Van rules: {len(rule_text)} characters")
+        except Exception as e:
+            print(f"Warning: Could not load rules from PDF: {e}")
+            # Fallback rules if PDF loading fails
+            rule_text = """
+            CRITICAL MAN & VAN RULES:
+            - CANNOT handle: bricks, concrete, soil, tiles, heavy construction waste, rubble, stones
+            - CANNOT handle: items over 25kg per person
+            - CANNOT handle: hazardous materials, asbestos, chemicals
+            - CAN handle: furniture, household items, light garden waste, boxes, bags
+            - IF customer has heavy/restricted items: DECLINE and suggest Skip Hire
+            """
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Man and Van specialist - friendly, British, and GET PRICING NOW!
+            ("system", f"""You are the WasteKing Man and Van specialist - friendly, British, and NO HARDCODED DATA!
 
-CRITICAL API PARAMETERS:
-- service: "mav"
+RULES FROM PDF - MUST FOLLOW:
+{rule_text}
+
+HEAVY ITEMS RULE - MANDATORY ENFORCEMENT:
+- BRICKS, MORTAR, CONCRETE, SOIL, TILES = TOO HEAVY FOR MAN & VAN
+- IF customer mentions these items: DECLINE and suggest Skip Hire
+- Say: "Sorry mate, bricks/concrete/soil are too heavy for our Man & Van service. You'll need a Skip Hire for that type of waste. Let me connect you with our skip team!"
+
+API PARAMETERS (only if items are suitable):
+- service: "mav" 
 - type: "4yd" or "6yd" or "8yd" or "12yd"
-- postcode: "LS14ED" (no spaces)
+- postcode: no spaces
 
-MANDATORY API CALL:
-smp_api(action="get_pricing", postcode="LS14ED", service="mav", type="6yd")
+MANDATORY RULE - NO HARDCODED DATA:
+- ONLY use data from customer message
+- NEVER use example postcodes
+- NEVER use fallback data
+- IF missing postcode: ASK FOR IT
+- IF missing items: ASK FOR THEM
 
-IMMEDIATE ACTION:
-- If you have postcode + items: CALL smp_api IMMEDIATELY
-- Use service="mav" ALWAYS
+WORKFLOW:
+1. CHECK ITEMS FIRST - Are they suitable for Man & Van?
+2. If TOO HEAVY: DECLINE and suggest Skip Hire
+3. If SUITABLE but missing data: ASK for missing info
+4. If SUITABLE and Ready for Pricing = True: Call smp_api
+5. NEVER get pricing for heavy items or missing data
 
 PERSONALITY:
 - Start with: "Alright love!" or "Right then!"
-- Get pricing first, chat later
+- Be helpful but enforce rules strictly
 
-WORKFLOW:
-1. Extract postcode, items from message
-2. Estimate size based on items
-3. CALL smp_api with service="mav" immediately
-4. Give price
-
-VOLUME ESTIMATION:
-- Few items (1-3 bags) = 4yd
-- Medium load (3-6 bags) = 6yd  
-- Large load (6+ bags) = 8yd
-- House clearance = 12yd
-
-Follow team rules:
-""" + rule_text + """
-
-CRITICAL: Call smp_api with service="mav" when you have postcode + items.
+MANDATORY: Only use REAL user data - no examples or hardcoded values!
 """),
-            ("human", """Customer: {input}
+            ("human", """Customer: {{input}}
 
-Extracted data: {extracted_info}
+Extracted data: {{extracted_info}}
 
-INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="mav"."""),
+INSTRUCTION: 
+1. Check if items are suitable for Man & Van first
+2. If unsuitable (heavy/restricted): DECLINE and suggest Skip Hire
+3. If suitable and Ready for Pricing = True: Call smp_api with service="mav"
+4. If suitable but missing data: ASK for missing info
+"""),
             ("placeholder", "{agent_scratchpad}")
         ])
         
@@ -71,32 +97,48 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="mav"."""),
             max_iterations=5
         )
     
+    def check_item_suitability(self, items_text: str) -> Dict[str, Any]:
+        """Check if items are suitable for Man & Van based on rules"""
+        items_lower = items_text.lower()
+        
+        # Heavy/restricted items that Man & Van CANNOT handle
+        restricted_items = [
+            'brick', 'bricks', 'mortar', 'concrete', 'cement', 'soil', 'dirt', 'earth',
+            'tile', 'tiles', 'stone', 'stones', 'rubble', 'hardcore', 'aggregate',
+            'sand', 'gravel', 'plaster', 'plasterboard', 'drywall', 'asbestos',
+            'industrial waste', 'construction waste', 'building waste', 'demolition'
+        ]
+        
+        found_restricted = []
+        for item in restricted_items:
+            if item in items_lower:
+                found_restricted.append(item)
+        
+        if found_restricted:
+            return {
+                "suitable": False,
+                "reason": f"Man & Van cannot handle: {', '.join(found_restricted)}",
+                "restricted_items": found_restricted,
+                "suggestion": "Skip Hire recommended for heavy construction materials"
+            }
+        
+        return {
+            "suitable": True,
+            "reason": "Items are suitable for Man & Van service"
+        }
+    
     def extract_and_validate_data(self, message: str) -> Dict[str, Any]:
-        """Extract customer data and check what's missing"""
+        """Extract customer data and check item suitability - NO HARDCODED DATA"""
         data = {}
         missing = []
         
-        # Extract name
-        name_patterns = [
-            r'name\s+(?:is\s+)?(\w+)',
-            r'i\'?m\s+(\w+)',
-            r'my\s+name\s+is\s+(\w+)'
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                data['firstName'] = match.group(1).title()
-                break
-        if 'firstName' not in data:
-            missing.append('name')
-        
-        # Extract postcode - NO SPACES
+        # Extract postcode - NO SPACES, NO HARDCODED FALLBACKS
         postcode_found = False
         postcode_patterns = [
+            r'postcode\s*:?\s*([A-Z0-9\s]+)',
             r'([A-Z]{1,2}\d{1,4}[A-Z]?\d?[A-Z]{0,2})',
-            r'postcode\s*:?\s*([A-Z0-9]+)',
-            r'at\s+([A-Z0-9]{4,8})',
-            r'in\s+([A-Z0-9]{4,8})',
+            r'at\s+([A-Z0-9\s]{4,8})',
+            r'in\s+([A-Z0-9\s]{4,8})',
         ]
         
         for pattern in postcode_patterns:
@@ -104,20 +146,22 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="mav"."""),
             for match in matches:
                 clean_match = match.strip().replace(' ', '')
                 if len(clean_match) >= 4 and any(c.isdigit() for c in clean_match) and any(c.isalpha() for c in clean_match):
-                    data['postcode'] = clean_match  # LS14ED
+                    data['postcode'] = clean_match
                     postcode_found = True
+                    print(f"🔧 POSTCODE EXTRACTED: '{match}' → '{clean_match}'")
                     break
             if postcode_found:
                 break
         
         if not postcode_found:
             missing.append('postcode')
+            print("❌ NO POSTCODE FOUND in message")
         
         # Extract items
         common_items = [
             'bags', 'furniture', 'sofa', 'chair', 'table', 'bed', 'mattress', 
-            'books', 'clothes', 'dumbbells', 'kettlebell', 'boxes', 'appliances',
-            'fridge', 'freezer'
+            'books', 'clothes', 'boxes', 'appliances', 'fridge', 'freezer',
+            'brick', 'bricks', 'mortar', 'concrete', 'soil', 'tiles', 'industrial'
         ]
         
         found_items = []
@@ -127,30 +171,27 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="mav"."""),
             if item in message_lower:
                 found_items.append(item)
         
-        # Extract quantity indicators
-        quantity_indicators = []
-        quantity_patterns = [
-            r'(\d+)\s*(?:bags?|boxes?|items?)',
-            r'(few|several|many)\s*(?:bags?|boxes?|items?)',
-        ]
-        
-        for pattern in quantity_patterns:
-            matches = re.findall(pattern, message_lower)
-            quantity_indicators.extend(matches)
-        
-        if found_items or quantity_indicators:
-            items_desc = []
-            if quantity_indicators:
-                items_desc.extend(quantity_indicators)
-            if found_items:
-                items_desc.extend(found_items)
-            data['items'] = ', '.join(items_desc)
+        if found_items:
+            data['items'] = ', '.join(found_items)
+            print(f"🔧 ITEMS EXTRACTED: {data['items']}")
+            
+            # CHECK ITEM SUITABILITY
+            suitability = self.check_item_suitability(data['items'])
+            data['item_suitability'] = suitability
+            
+            if not suitability['suitable']:
+                data['service_declined'] = True
+                data['decline_reason'] = suitability['reason']
+                data['alternative_service'] = 'Skip Hire'
+                print(f"❌ ITEMS NOT SUITABLE: {suitability['reason']}")
+                return data
         else:
             missing.append('items')
+            print("❌ NO ITEMS FOUND in message")
         
-        # Estimate volume
-        volume_score = 0
-        if 'items' in data:
+        # Estimate volume (only if items are suitable)
+        if 'items' in data and data.get('item_suitability', {}).get('suitable', False):
+            volume_score = 0
             items_text = data['items'].lower()
             bag_matches = re.findall(r'(\d+)', items_text)
             for match in bag_matches:
@@ -160,57 +201,51 @@ INSTRUCTION: If Ready for Pricing = True, CALL smp_api with service="mav"."""),
             for item in furniture_items:
                 if item in items_text:
                     volume_score += 5
+            
+            # Convert to size
+            if volume_score <= 3:
+                data['type'] = '4yd'
+            elif volume_score <= 8:
+                data['type'] = '6yd'
+            elif volume_score <= 15:
+                data['type'] = '8yd'
+            else:
+                data['type'] = '12yd'
         
-        # Convert to size
-        if volume_score <= 3:
-            data['type'] = '4yd'
-        elif volume_score <= 8:
-            data['type'] = '6yd'
-        elif volume_score <= 15:
-            data['type'] = '8yd'
-        else:
-            data['type'] = '12yd'
-        
-        # Extract phone
-        phone_patterns = [
-            r'phone\s+(?:is\s+)?(\d{11})',
-            r'mobile\s+(?:is\s+)?(\d{11})',
-            r'\b(\d{11})\b'
-        ]
-        for pattern in phone_patterns:
-            match = re.search(pattern, message)
-            if match:
-                data['phone'] = match.group(1)
-                break
-        
-        # Extract email
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        email_match = re.search(email_pattern, message)
-        if email_match:
-            data['emailAddress'] = email_match.group()
-        
-        data['service'] = 'mav'  # CORRECT SERVICE
+        data['service'] = 'mav'
         data['missing_info'] = missing
         
-        # Ready for pricing check
+        # Ready for pricing only if items are suitable AND we have real data
         has_postcode = 'postcode' in data
-        has_items = 'items' in data
-        data['ready_for_pricing'] = has_postcode and has_items
+        has_suitable_items = 'items' in data and data.get('item_suitability', {}).get('suitable', False)
+        data['ready_for_pricing'] = has_postcode and has_suitable_items and not data.get('service_declined', False)
+        
+        print(f"🔧 READY FOR PRICING: {data['ready_for_pricing']}")
+        print(f"🔧 MISSING INFO: {missing}")
         
         return data
     
     def process_message(self, message: str, context: Dict = None) -> str:
         extracted = self.extract_and_validate_data(message)
         
-        extracted_info = f"""
+        # If service is declined due to unsuitable items
+        if extracted.get('service_declined', False):
+            extracted_info = f"""
+ITEMS NOT SUITABLE FOR MAN & VAN!
+Items Found: {extracted.get('items', 'N/A')}
+Decline Reason: {extracted.get('decline_reason', 'Heavy items detected')}
+Alternative: {extracted.get('alternative_service', 'Skip Hire')}
+Action Required: DECLINE and suggest Skip Hire
+"""
+        else:
+            extracted_info = f"""
 Postcode: {extracted.get('postcode', 'NOT PROVIDED')}
 Items: {extracted.get('items', 'NOT PROVIDED')}
-Estimated Size: {extracted.get('type', '6yd')}
+Item Suitability: {extracted.get('item_suitability', {}).get('suitable', 'Unknown')}
+Estimated Size: {extracted.get('type', 'N/A')}
 Service: mav
 Ready for Pricing: {extracted.get('ready_for_pricing', False)}
 Missing: {[x for x in extracted.get('missing_info', []) if x in ['postcode', 'items']]}
-
-*** API Parameters: postcode={extracted.get('postcode', 'NOT PROVIDED')}, service=mav, type={extracted.get('type', '6yd')} ***
 """
         
         agent_input = {
