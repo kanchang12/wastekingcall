@@ -387,53 +387,47 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
         
         return default_state
     
-    def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
+     def _extract_and_update_state(self, message: str, state: Dict[str, Any]):
         """Extract key information from message and update state"""
     
         message_lower = message.lower()
         extracted = state.get('extracted_info', {})
     
-        # Extract postcode - CLEAN FORMAT FOR API
+        # Extract postcode
         postcode_patterns = [
-            r'\b([A-Z]{1,2}[0-9R][0-9A-Z]? ?[0-9][A-Z]{2})\b', # More robust UK postcode pattern
-            r'\b([A-Z]{1,2}\d{1,4})\b',                        # Catches outward code like LS1
+            r'\b([A-Z]{1,2}[0-9R][0-9A-Z]? ?[0-9][A-Z]{2})\b',
+            r'\b([A-Z]{1,2}\d{1,4})\b',
         ]
-    
         for pattern in postcode_patterns:
-            # FIX: Pass the single pattern from the loop, not the list
             postcode_match = re.search(pattern, message.upper())
             if postcode_match:
                 raw_postcode = postcode_match.group(1)
-                # FIX: Ensure it removes space if present
-                clean_postcode = raw_postcode.replace(' ', '').upper()
-                extracted['postcode'] = clean_postcode
-                print(f"✅ FOUND POSTCODE: '{raw_postcode}' → CLEANED: '{clean_postcode}' (for API)")
+                extracted['postcode'] = raw_postcode.replace(' ', '').upper()
+                print(f"✅ FOUND POSTCODE: '{raw_postcode}' → CLEANED: '{extracted['postcode']}' (for API)")
                 break
-    
-        # Extract phone number
+        
+        # Correct phone number extraction and stop at first match
         phone_patterns = [
-            r'\b0\d{10}\b',
+            r'\b(?:phone|number)?\s*(?:\+?44\s?7|\b07)\d{9}\b',
             r'\b\d{11}\b',
-            r'\b0\d{4}\s?\d{6}\b',
-            r'\b0\d{3}\s?\d{3}\s?\d{4}\b'
+            r'\b\+?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{4,8}\b'
         ]
         for pattern in phone_patterns:
             phone_match = re.search(pattern, message)
             if phone_match:
-                extracted['phone'] = phone_match.group(0).replace(' ', '')
+                extracted['phone'] = phone_match.group(0).replace(' ', '').replace('-', '').replace('.', '')
                 print(f"✅ FOUND PHONE: {extracted['phone']}")
                 break
     
-        # Extract name
+        # Correct Name extraction and stop at first match
         name_patterns = [
-            r'\bname\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
+            r'\bname\s*:?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
             r'\bmy\s+name\s+is\s+([A-Z][a-z]+)\b',
-            r'\bi\s+am\s+([A-Z][a-z]+)\b',
+            r'\bi\s+am\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
             r'\b([A-Z][a-z]+)\b'
         ]
         
-        # Do not overwrite name if already found
-        if 'name' not in extracted:
+        if not extracted.get('name'):
             for pattern in name_patterns:
                 name_match = re.search(pattern, message)
                 if name_match:
@@ -454,7 +448,6 @@ Collection will be arranged within 24 hours. Thank you for choosing WasteKing!""
                 found_waste.append(keyword)
         
         if found_waste:
-            # Combine with existing waste types
             existing_waste = extracted.get('waste_type', [])
             if isinstance(existing_waste, str):
                 existing_waste = existing_waste.split(', ')
