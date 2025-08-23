@@ -1,210 +1,174 @@
-# agents/grab_hire_agent.py - ORIGINAL PDF RULES RESTORED
-# CHANGES: Restored your original PDF rule book integration + fixed data extraction
-
-import json 
+import json
 import re
+import uuid
+import os
+import PyPDF2
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-from utils.rules_processor import RulesProcessor
+
+# PDF RULES CACHE
+_PDF_RULES_CACHE = None
+# AGENT STATE STORAGE
+_AGENT_STATES = {}
 
 class GrabHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
+        self.pdf_rules = self._load_pdf_rules_with_cache()
         
-        # RESTORED: Your original PDF rule book integration
-        self.rules_processor = RulesProcessor()
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
-
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are the WasteKing Grab Hire specialist - friendly, British, and GET PRICING NOW!
+            ("system", """You are Grab Hire agent. Follow 9-step sequence:
+1. name 2. postcode 3. product 4. waste type 5. quantity 6. product specific 7. price 8. date 9. booking
 
-IMPORTANT ROUTING: You handle ALL waste services EXCEPT "mav" (man and van) and "skip" (skip hire).
-This includes: grab hire, general waste, large items, heavy materials, construction waste, garden waste, office clearance, etc.
-Out side office calls, you will attend, never forward but try to make the sale get price, get booking link, given nothing else is stopping, make the sale
-RULES FROM PDF KNOWLEDGE BASE:
-""" + rule_text + """
-
-CRITICAL API PARAMETERS:
-- service: "grab" (for grab hire) or determine appropriate service
-- type: "8yd" (default for grab)
-- postcode: Clean format like "LS14ED" (no spaces for API)
-
-MANDATORY WORKFLOW:
-1. Extract postcode + material type from message
-2. If customer provides name + phone + says "book": CALL create_booking_quote IMMEDIATELY
-3. If just pricing info: Call get_pricing then ask to book
-4. Booking will automatically call supplier
-
-PERSONALITY:
-- Start with: "Alright love!" or "Right then!"
-- Get pricing first, then book if customer confirms
-
-Follow PDF rules above. Get pricing fast."""),
-            ("human", """Customer: {input}
-
-Extracted data: {extracted_info}
-
-INSTRUCTION: If customer has all info and says "book", call create_booking_quote immediately."""),
+Ask questions in sequence. Save state. Use tools for pricing and booking.
+If customer needs different service, transfer back to orchestrator with: TRANSFER_TO_ORCHESTRATOR:{collected_data}"""),
+            ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
         ])
         
-        self.agent = create_openai_functions_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=self.prompt
-        )
-        
-        self.executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
-            verbose=True,
-            max_iterations=10
-        )
+        self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
+        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
+    
+    def _load_pdf_rules_with_cache(self) -> str:
+        global _PDF_RULES_CACHE
+        if _PDF_RULES_CACHE is not None:
+            return _PDF_RULES_CACHE
+        try:
+            pdf_path = os.path.join('data', 'rules', 'all rules.pdf')
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                _PDF_RULES_CACHE = text
+                return text
+            else:
+                _PDF_RULES_CACHE = "PDF rules not found"
+                return _PDF_RULES_CACHE
+        except Exception as e:
+            _PDF_RULES_CACHE = f"Error loading PDF: {str(e)}"
+            return _PDF_RULES_CACHE
+    
+    def _load_state(self, conversation_id: str) -> Dict[str, Any]:
+        global _AGENT_STATES
+        return _AGENT_STATES.get(conversation_id, {})
+    
+    def _save_state(self, conversation_id: str, data: Dict[str, Any]):
+        global _AGENT_STATES
+        _AGENT_STATES[conversation_id] = data
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        """Process with PROPER data extraction"""
+        conversation_id = context.get('conversation_id') if context else 'default'
+        previous_state = self._load_state(conversation_id)
+        extracted_data = self._extract_data(message, context)
+        combined_data = {**previous_state, **extracted_data}
         
-        # FIXED: Proper data extraction
-        extracted_data = self._extract_data_properly(message, context)
+        transfer_check = self._check_transfer_needed_with_rules(message, combined_data)
+        if transfer_check:
+            self._save_state(conversation_id, combined_data)
+            return f"TRANSFER_TO_ORCHESTRATOR:{json.dumps(combined_data)}"
         
-        print(f"🔧 GRAB DATA: {json.dumps(extracted_data, indent=2)}")
+        current_step = self._determine_step(combined_data)
+        response = ""
         
-        postcode = extracted_data.get('postcode')
-        materials = extracted_data.get('material_type')
-        has_name = bool(extracted_data.get('firstName'))
-        has_phone = bool(extracted_data.get('phone'))
-        
-        # SIMPLE RULE: If they have all info and said "book" = CREATE BOOKING
-        wants_booking = 'book' in message.lower()
-        has_all_info = postcode and materials and has_name and has_phone
-        
-        print(f"🎯 DECISION:")
-        print(f"   - Wants booking: {wants_booking}")
-        print(f"   - Has all info: {has_all_info}")
-        print(f"   - Name: {extracted_data.get('firstName')}")
-        print(f"   - Phone: {extracted_data.get('phone')}")
-        
-        if wants_booking and has_all_info:
-            action = "create_booking_quote"
-            print(f"🔧 CREATING BOOKING IMMEDIATELY")
-        elif postcode and materials:
-            action = "get_pricing"
-            print(f"🔧 GETTING PRICING FIRST")
+        if current_step == 'name' and not combined_data.get('firstName'):
+            response = "What's your name?"
+        elif current_step == 'postcode' and not combined_data.get('postcode'):
+            response = "What's your postcode?"
+        elif current_step == 'product' and not combined_data.get('product'):
+            response = "What service do you need?"
+        elif current_step == 'waste_type' and not combined_data.get('waste_type'):
+            response = "What materials need collecting?"
+        elif current_step == 'quantity' and not combined_data.get('quantity'):
+            response = "How much material do you have?"
+        elif current_step == 'product_specific' and not combined_data.get('product_specific'):
+            response = "Any specific requirements?"
+        elif current_step == 'price':
+            combined_data['has_pricing'] = True
+            response = self._get_pricing(combined_data)
+        elif current_step == 'date' and not combined_data.get('preferred_date'):
+            response = "When would you like collection?"
+        elif current_step == 'booking':
+            response = self._create_booking(combined_data)
         else:
-            # Missing data
-            if not postcode:
-                return "Right then! What's your postcode?"
-            if not materials:
-                return "What materials need collecting?"
-            return "Let me get you a grab hire quote."
+            response = "What's your name?"
         
-        extracted_info = f"""
-Postcode: {postcode}
-Material Type: {materials}
-Service: grab
-Type: {extracted_data.get('type', '8yd')}
-Customer Name: {extracted_data.get('firstName', 'NOT PROVIDED')}
-Customer Phone: {extracted_data.get('phone', 'NOT PROVIDED')}
-Action: {action}
-Ready for API: True
-"""
+        self._save_state(conversation_id, combined_data)
+        return response
+    
+    def _check_transfer_needed_with_rules(self, message: str, data: Dict[str, Any]) -> bool:
+        message_lower = message.lower()
+        if any(word in message_lower for word in ['skip', 'man and van', 'mav', 'furniture']):
+            return True
+        return False
+    
+    def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
+        data = context.copy() if context else {}
         
-        # Generate booking ref if booking
-        if action == "create_booking_quote":
-            import uuid
-            extracted_data['booking_ref'] = str(uuid.uuid4())
+        postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})', message.upper().replace(' ', ''))
+        if postcode_match:
+            data['postcode'] = postcode_match.group(1)
         
-        agent_input = {
-            "input": message,
-            "extracted_info": extracted_info,
-            "action": action
-        }
+        name_match = re.search(r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', message, re.IGNORECASE)
+        if name_match:
+            data['firstName'] = name_match.group(1).strip().title()
         
-        agent_input.update(extracted_data)
-        
+        phone_match = re.search(r'\b(07\d{9}|\d{11})\b', message)
+        if phone_match:
+            data['phone'] = phone_match.group(1)
+            
+        if not data.get('waste_type') and any(word in message.lower() for word in ['soil', 'concrete', 'rubble', 'heavy']):
+            data['waste_type'] = message.strip()
+            
+        if not data.get('quantity') and any(word in message.lower() for word in ['tonnes', 'cubic', 'loads']):
+            data['quantity'] = message.strip()
+            
+        if not data.get('preferred_date') and any(word in message.lower() for word in ['tomorrow', 'today', 'monday', 'week']):
+            data['preferred_date'] = message.strip()
+            
+        return data
+    
+    def _determine_step(self, data: Dict[str, Any]) -> str:
+        if not data.get('firstName'): return 'name'
+        if not data.get('postcode'): return 'postcode'  
+        if not data.get('product'): return 'product'
+        if not data.get('waste_type'): return 'waste_type'
+        if not data.get('quantity'): return 'quantity'
+        if not data.get('product_specific'): return 'product_specific'
+        if not data.get('has_pricing'): return 'price'
+        if not data.get('preferred_date'): return 'date'
+        return 'booking'
+    
+    def _get_pricing(self, data: Dict[str, Any]) -> str:
         try:
+            agent_input = {
+                "input": f"Get pricing for grab hire at {data.get('postcode')}",
+                "postcode": data.get('postcode'),
+                "service": "grab",
+                "type": data.get('product', '8yd')
+            }
             response = self.executor.invoke(agent_input)
             return response["output"]
         except Exception as e:
-            print(f"❌ Grab Agent Error: {str(e)}")
-            return "Right then! I need your postcode and what type of materials you have. What's your postcode?"
+            return f"Error getting pricing: {str(e)}"
     
-    def _extract_data_properly(self, message: str, context: Dict = None) -> Dict[str, Any]:
-        """FIXED: Proper data extraction that actually works"""
-        data = {}
-        
-        # Context first
-        if context:
-            for key in ['postcode', 'firstName', 'phone', 'emailAddress']:
-                if context.get(key):
-                    data[key] = context[key]
-        
-        # Extract postcode - FIXED patterns
-        postcode_patterns = [
-            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # M1 1AB
-            r'M1\s*1AB|M11AB',  # Specific patterns
-        ]
-        for pattern in postcode_patterns:
-            matches = re.findall(pattern, message.upper())
-            for match in matches:
-                clean = match.strip().replace(' ', '')
-                if len(clean) >= 5:
-                    data['postcode'] = clean
-                    print(f"✅ FOUND POSTCODE: {clean}")
-                    break
-        
-        # Extract name - FIXED patterns
-        name_patterns = [
-            r'[Nn]ame\s+(\w+\s+\w+)',  # "Name Kanchen Khosh"
-            r'[Nn]ame\s+(\w+)',        # "Name Kanchen"
-            r'my name is (\w+)',
-            r'i\'m (\w+)',
-            r'call me (\w+)'
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                name = match.group(1).strip().title()
-                data['firstName'] = name
-                print(f"✅ FOUND NAME: {name}")
-                break
-        
-        # Extract phone - FIXED patterns
-        phone_patterns = [
-            r'payment link to (\d{11})',  # "payment link to 07823656762"
-            r'link to (\d{11})',          # "link to 07823656762"
-            r'to (\d{11})',               # "to 07823656762"
-            r'\b(07\d{9})\b',             # Any UK mobile
-            r'\b(\d{11})\b'               # Any 11 digits
-        ]
-        for pattern in phone_patterns:
-            match = re.search(pattern, message)
-            if match:
-                phone = match.group(1)
-                data['phone'] = phone
-                print(f"✅ FOUND PHONE: {phone}")
-                break
-        
-        # Extract materials
-        materials = [
-            'soil', 'muck', 'rubble', 'concrete', 'brick', 'sand', 'gravel',
-            'construction', 'building', 'demolition', 'household', 'office', 
-            'garden', 'wood', 'metal', 'general'
-        ]
-        found = []
-        message_lower = message.lower()
-        for material in materials:
-            if material in message_lower:
-                found.append(material)
-        if found:
-            data['material_type'] = ', '.join(found)
-            print(f"✅ FOUND MATERIALS: {data['material_type']}")
-        
-        data['service'] = 'grab'
-        data['type'] = '8yd'
-        
-        return data
+    def _create_booking(self, data: Dict[str, Any]) -> str:
+        try:
+            booking_ref = str(uuid.uuid4())[:8]
+            agent_input = {
+                "input": f"Create booking for {data.get('firstName')}",
+                "postcode": data.get('postcode'),
+                "service": "grab", 
+                "type": data.get('product', '8yd'),
+                "firstName": data.get('firstName'),
+                "phone": data.get('phone'),
+                "booking_ref": booking_ref
+            }
+            response = self.executor.invoke(agent_input)
+            return response["output"]
+        except Exception as e:
+            return f"Error creating booking: {str(e)}"
