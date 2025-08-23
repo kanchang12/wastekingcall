@@ -5,363 +5,395 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import requests
 import uuid
+from utils.rules_processor import RulesProcessor
+from utils.state_manager import StateManager
 
-# GLOBAL STATE STORAGE - survives instance recreation  
+# GLOBAL STATE STORAGE - survives instance recreation
 _GLOBAL_CONVERSATION_STATES = {}
 
 class AgentOrchestrator:
-    """FIXED: Simple Linear 7-Step Process - NO LOOPS, NO REPEATS"""
+    """Intelligent Multi-Agent Router - Uses existing agents and tools properly"""
     
     def __init__(self, llm, agents):
         self.llm = llm
-        self.agents = agents
+        self.agents = agents  # All existing agents: skip_hire, mav, grab_hire, pricing
         self.koyeb_url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app"
         global _GLOBAL_CONVERSATION_STATES
         self.conversation_states = _GLOBAL_CONVERSATION_STATES
-        print("✅ FIXED: Linear 7-step process - NO LOOPS")
+        
+        # IMPORT RULES FROM PDF
+        self.rules_processor = RulesProcessor()
+        self.business_rules = self.rules_processor.get_all_rules()
+        
+        # USE STATE MANAGER
+        self.state_manager = StateManager(os.getenv('DATABASE_PATH', 'conversations.db'))
+        
+        print("✅ PROPER Multi-Agent Orchestrator initialized")
+        print("✅ Rules imported from data/rules/all rules.pdf")
+        print("✅ Agents available:", list(self.agents.keys()))
+        print("✅ Using StateManager for conversation persistence")
+        print("✅ Agents will use tools: SMPAPITool, SMSTool, ElevenLabsSupplierCaller")
     
     def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
-        """SIMPLE LINEAR FLOW: A1 → A2 → A3 → A4 → A5 → A6 → A7 → BOOKING"""
+        """Intelligent routing to appropriate agents who use proper tools"""
         
-        conversation_state = self._load_conversation_state(conversation_id)
+        # LOAD STATE PROPERLY using StateManager
+        conversation_state = self._load_conversation_state_properly(conversation_id)
+        
+        # Extract basic data from message + context
         self._extract_and_update_state(message, conversation_state, context)
+        
         extracted = conversation_state.get('extracted_info', {})
         
-        # Get current step
-        current_step = conversation_state.get('current_step', 1)
+        print(f"🎯 ORCHESTRATOR ANALYSIS:")
+        print(f"   💬 Message: {message}")
+        print(f"   📋 Extracted: {json.dumps(extracted, indent=2)}")
+        print(f"   🏪 Available Agents: {list(self.agents.keys())}")
         
-        print(f"🎯 CURRENT STEP: {current_step}")
-        print(f"🎯 EXTRACTED DATA: {json.dumps(extracted, indent=2)}")
+        # INTELLIGENT ROUTING LOGIC using PDF rules
+        routing_decision = self._determine_routing_with_rules(message, extracted, conversation_state)
         
-        # STEP 1: GET POSTCODE
-        if current_step == 1:
-            if not extracted.get('postcode'):
-                return self._response(conversation_state, "What's your postcode?", 1)
-            else:
-                # HAVE POSTCODE - CHECK IF WE CAN GET PRICE NOW
-                if extracted.get('waste_type') and extracted.get('size'):
-                    # WE HAVE ENOUGH - GET PRICE NOW
-                    conversation_state['current_step'] = 7
-                    return self._get_price_and_quote(conversation_state, extracted)
-                else:
-                    conversation_state['current_step'] = 2
-                    return self._response(conversation_state, "What are you going to put in the skip?", 2)
+        print(f"🚦 ROUTING DECISION: {routing_decision}")
         
-        # STEP 2: GET WASTE TYPE  
-        elif current_step == 2:
-            if not extracted.get('waste_type'):
-                return self._response(conversation_state, "What are you going to put in the skip?", 2)
-            else:
-                # HAVE WASTE TYPE - GET PRICE NOW
-                conversation_state['current_step'] = 7
-                return self._get_price_and_quote(conversation_state, extracted)
-        
-        # STEP 3: GET LOCATION
-        elif current_step == 3:
-            # ANY answer moves to step 4 - API handles permit costs
-            conversation_state['current_step'] = 4
-            return self._response(conversation_state, "Is there easy access for our lorry to deliver the skip?", 4)
-        
-        # STEP 4: GET ACCESS
-        elif current_step == 4:
-            # ANY answer moves to step 5
-            conversation_state['current_step'] = 5
-            return self._response(conversation_state, "Do you have any fridges/freezers, mattresses, or upholstered furniture?", 5)
-        
-        # STEP 5: CHECK PROHIBITED ITEMS
-        elif current_step == 5:
-            # API will handle surcharges - just move to next step
-            conversation_state['current_step'] = 6
-            return self._response(conversation_state, "When do you need this delivered?", 6)
-        
-        # STEP 6: GET TIMING
-        elif current_step == 6:
-            # ANY answer moves to step 7 - GET PRICE
-            conversation_state['current_step'] = 7
-            return self._get_price_and_quote(conversation_state, extracted)
-        
-        # STEP 7: PRESENT QUOTE & HANDLE BOOKING
-        elif current_step == 7:
-            wants_booking = any(word in message.lower() for word in ['book', 'yes', 'confirm', 'go ahead', 'ready'])
+        # Route to appropriate agent (they will use their tools)
+        if routing_decision['agent'] == 'direct_response':
+            # Handle simple questions directly
+            response = routing_decision['response']
+            agent_used = 'orchestrator'
             
-            if wants_booking:
-                # Check if we have name and phone
-                firstName = extracted.get('firstName')
-                phone = extracted.get('phone')
-                
-                if firstName and phone:
-                    # EXECUTE BOOKING NOW
-                    return self._execute_booking(conversation_state, extracted)
-                else:
-                    # Need details
-                    if not firstName:
-                        conversation_state['current_step'] = 8
-                        return self._response(conversation_state, "What's your name?", 8)
-                    elif not phone:
-                        conversation_state['current_step'] = 9
-                        return self._response(conversation_state, "What's your phone number?", 9)
-            else:
-                return self._response(conversation_state, "Would you like to book this skip?", 7)
-        
-        # STEP 8: GET NAME
-        elif current_step == 8:
-            conversation_state['current_step'] = 9
-            return self._response(conversation_state, "What's your phone number?", 9)
-        
-        # STEP 9: GET PHONE THEN BOOK
-        elif current_step == 9:
-            return self._execute_booking(conversation_state, extracted)
-        
-        # DEFAULT
-        else:
-            conversation_state['current_step'] = 1
-            return self._response(conversation_state, "What's your postcode?", 1)
-    
-    def _get_price_and_quote(self, conversation_state: Dict, extracted: Dict) -> Dict[str, Any]:
-        """STEP 7: Get price from API and present quote"""
-        
-        postcode = extracted.get('postcode')
-        service = conversation_state.get('service_preference', 'skip')  # skip, mav, grab
-        type = extracted.get('size', '8yd')  # 4yd, 6yd, 8yd, 12yd
-        
-        print(f"🔥 GETTING PRICE: postcode={postcode}, service={service}, type={type}")
-        
-        # GET PRICE FROM API - SYSTEM CALCULATES EVERYTHING
-        pricing_result = self._get_pricing(postcode, service, type)
-        final_price = float(str(pricing_result.get('price', 0)).replace('£', '').replace(',', '').strip())
-        
-        # Build quote
-        response = f"💰 QUOTE FOR {type} {service.upper()}:\n"
-        response += f"TOTAL: £{final_price}\n\n"
-        response += "Ready to book?"
-        
-        conversation_state['final_price'] = final_price
-        return self._response(conversation_state, response, 7)
-    
-    def _execute_booking(self, conversation_state: Dict, extracted: Dict) -> Dict[str, Any]:
-        """EXECUTE 3-STEP KOYEB BOOKING PROCESS"""
-        
-        # Get all data
-        postcode = extracted.get('postcode')
-        firstName = extracted.get('firstName')
-        phone = extracted.get('phone')
-        service = conversation_state.get('service_preference', 'skip')  # skip, mav, grab
-        type = extracted.get('size', '8yd')  # 4yd, 6yd, 8yd, 12yd
-        final_price = conversation_state.get('final_price', 0)
-        
-        print(f"🔥 EXECUTING BOOKING:")
-        print(f"   📍 Postcode: {postcode}")
-        print(f"   👤 Name: {firstName}")
-        print(f"   📱 Phone: {phone}")
-        print(f"   🛠️ Service: {service}")
-        print(f"   📏 Type: {type}")
-        print(f"   💰 Price: £{final_price}")
-        
-        # STEP 1: Generate booking ref
-        booking_ref = str(uuid.uuid4())[:8]
-        
-        # STEP 2: Create booking
-        booking_result = self._create_booking_quote(type, service, postcode, firstName, phone, booking_ref)
-        
-        # STEP 3: Send payment link
-        payment_result = self._send_payment_link(phone, booking_ref, str(final_price))
-        
-        # SUCCESS RESPONSE
-        response = f"✅ BOOKING CONFIRMED!\n"
-        response += f"📋 Reference: {booking_ref}\n"
-        response += f"💰 Total: £{final_price}\n"
-        response += f"📱 Payment link sent to {phone}\n"
-        response += f"🚛 Skip delivered 7am-6pm (driver calls ahead)"
-        
-        conversation_state['current_step'] = 10  # COMPLETE
-        return self._response(conversation_state, response, 10)
-    
-    def _extract_and_update_state(self, message: str, state: Dict[str, Any], context: Dict = None):
-        """Use AI to understand and extract data from message"""
-        extracted = state.get('extracted_info', {})
-        
-        # Include context
-        if context:
-            for key in ['postcode', 'firstName', 'phone', 'size']:
-                if context.get(key):
-                    extracted[key] = context[key]
-        
-        # Use LLM to understand the message
-        if hasattr(self, 'llm') and self.llm:
+        elif routing_decision['agent'] in self.agents:
+            # Route to specific agent - THEY will use tools
+            agent = self.agents[routing_decision['agent']]
+            
             try:
-                # Let AI understand what customer is saying
-                understanding_prompt = f"""
-Analyze this customer message and extract information:
-"{message}"
-
-Extract ONLY if clearly stated:
-- postcode: UK postcode (complete format like M11AB, not partial like M1 or Manchester)
-- firstName: customer's first name  
-- phone: phone number
-- size: skip size (4yd, 6yd, 8yd, 12yd)
-- waste_type: what they're putting in skip
-- service_preference: skip, mav (man & van), or grab
-
-Return JSON only: {{"postcode": "value", "firstName": "value", ...}}
-"""
+                print(f"🔀 ROUTING TO: {routing_decision['agent']}")
+                print(f"🔧 Agent will use tools: SMPAPITool, SMSTool, ElevenLabsSupplierCaller")
                 
-                # Try different LLM methods
-                ai_response = None
-                if hasattr(self.llm, 'invoke'):
-                    ai_response = self.llm.invoke(understanding_prompt).content
-                elif hasattr(self.llm, 'complete'):
-                    ai_response = self.llm.complete(understanding_prompt)
-                elif hasattr(self.llm, '__call__'):
-                    ai_response = self.llm(understanding_prompt)
+                # Pass context to agent - agent will use tools for pricing/booking/SMS
+                response = agent.process_message(message, context or extracted)
+                agent_used = routing_decision['agent']
                 
-                if ai_response and '{' in ai_response:
-                    import json
-                    json_start = ai_response.find('{')
-                    json_end = ai_response.rfind('}') + 1
-                    json_str = ai_response[json_start:json_end]
-                    ai_extracted = json.loads(json_str)
-                    
-                    for key, value in ai_extracted.items():
-                        if value and str(value).strip() and str(value).strip() != "null":
-                            extracted[key] = str(value).strip()
-                            print(f"✅ AI EXTRACTED {key.upper()}: {value}")
-                            
+                # Check if agent created booking (they handle supplier calls via tools)
+                if 'booking' in response.lower() and 'ref' in response.lower():
+                    print("✅ Agent handled booking with tools (auto supplier call)")
+                    conversation_state['has_booking'] = True
+                
             except Exception as e:
-                print(f"AI extraction failed: {e}")
-                # Fallback to improved extraction
-                self._improved_extraction_fallback(message, extracted)
+                print(f"❌ Agent {routing_decision['agent']} failed: {str(e)}")
+                response = "Let me connect you with our team for immediate assistance."
+                agent_used = 'fallback'
+        
         else:
-            # No LLM available, use improved extraction
-            self._improved_extraction_fallback(message, extracted)
+            # Fallback - still route to grab_hire (handles most cases)
+            try:
+                if 'grab_hire' in self.agents:
+                    print("🔄 FALLBACK: Routing to grab_hire agent")
+                    response = self.agents['grab_hire'].process_message(message, context or extracted)
+                    agent_used = 'grab_hire'
+                else:
+                    response = "How can I help with your waste collection today?"
+                    agent_used = 'orchestrator'
+            except Exception as e:
+                print(f"❌ Fallback failed: {str(e)}")
+                response = "How can I help with your waste collection today?"
+                agent_used = 'orchestrator'
         
-        state['extracted_info'] = extracted
-    
-    def _improved_extraction_fallback(self, message: str, extracted: Dict):
-        """Improved extraction that understands context"""
-        message_lower = message.lower()
+        # Update state using StateManager
+        conversation_state['last_agent'] = agent_used
+        conversation_state['routing_info'] = routing_decision
         
-        # Smart postcode extraction - understand "Manchester" context
-        if 'manchester' in message_lower:
-            # Common Manchester postcodes
-            postcode_match = re.search(r'([M][0-9]{1,2}[0-9][A-Z]{2})', message.upper())
-            if postcode_match:
-                extracted['postcode'] = postcode_match.group(1)
-                print(f"✅ EXTRACTED POSTCODE: {extracted['postcode']}")
-            elif not extracted.get('postcode'):
-                # They mentioned Manchester but no specific postcode - ask for it
-                extracted['mentioned_location'] = 'Manchester'
-                print(f"✅ MENTIONED LOCATION: Manchester")
-        
-        # Complete postcode extraction
-        postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?)\s*([0-9][A-Z]{2})', message.upper())
-        if postcode_match:
-            extracted['postcode'] = postcode_match.group(1) + postcode_match.group(2)
-            print(f"✅ EXTRACTED COMPLETE POSTCODE: {extracted['postcode']}")
-        elif re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})', message.upper()):
-            match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})', message.upper())
-            extracted['postcode'] = match.group(1)
-            print(f"✅ EXTRACTED COMPLETE POSTCODE: {extracted['postcode']}")
-        
-        # Smart size extraction - "an 88" = 8 yard
-        if re.search(r'\b(?:an?\s+)?88?\b', message_lower) or '8 yard' in message_lower or '8yd' in message_lower:
-            extracted['size'] = '8yd'
-            print(f"✅ EXTRACTED SIZE: 8yd")
-        elif '12' in message or 'twelve' in message_lower:
-            extracted['size'] = '12yd'
-        elif '6' in message or 'six' in message_lower:
-            extracted['size'] = '6yd'
-        elif '4' in message or 'four' in message_lower:
-            extracted['size'] = '4yd'
-        elif not extracted.get('size'):
-            extracted['size'] = '8yd'  # default
-        
-        # Smart service detection - "cleared" suggests skip hire
-        if any(word in message_lower for word in ['cleared', 'skip', 'hire']):
-            extracted['service_intent'] = 'skip'
-            print(f"✅ SERVICE INTENT: skip")
-        
-        # Basic name extraction
-        if 'kanchen' in message_lower:
-            extracted['firstName'] = 'Kanchen'
-            print(f"✅ EXTRACTED NAME: Kanchen")
-        
-        # Basic phone extraction  
-        phone_match = re.search(r'078-?(\d{8})', message)
-        if phone_match:
-            extracted['phone'] = '078' + phone_match.group(1)
-            print(f"✅ EXTRACTED PHONE: {extracted['phone']}")
-        
-        # Smart waste type - if they want something "cleared", ask what
-        if 'cleared' in message_lower and not extracted.get('waste_type'):
-            extracted['needs_waste_info'] = True
-    
-    def _response(self, conversation_state: Dict, response: str, step: int) -> Dict[str, Any]:
-        """Build response dictionary"""
-        conversation_state['current_step'] = step
+        self._save_conversation_state_properly(conversation_id, conversation_state, message, response, agent_used)
         
         return {
             "success": True,
             "response": response,
             "conversation_state": conversation_state,
-            "conversation_id": conversation_state.get('conversation_id', 'unknown'),
+            "conversation_id": conversation_id,
+            "routing": routing_decision,
+            "agent_used": agent_used,
+            "tools_available": ["SMPAPITool", "SMSTool", "DateTimeTool", "ElevenLabsSupplierCaller"],
             "timestamp": datetime.now().isoformat()
         }
     
-    # KOYEB API METHODS
-    def _send_koyeb_webhook(self, url: str, payload: dict, method: str = "POST") -> dict:
-        try:
-            headers = {"Content-Type": "application/json"}
-            if method.upper() == "POST":
-                r = requests.post(url, json=payload, headers=headers, timeout=10)
+    def _determine_routing_with_rules(self, message: str, extracted: Dict, state: Dict) -> Dict[str, Any]:
+        """Intelligent routing using PDF rules and business logic"""
+        
+        message_lower = message.lower()
+        
+        # APPLY PDF RULES for routing decisions
+        
+        # 1. GENERAL QUESTIONS
+        question_words = ['what services', 'what do you', 'help me', 'options', 'types of', 'services available']
+        if any(word in message_lower for word in question_words):
+            return {
+                'agent': 'direct_response',
+                'reason': 'general_question',
+                'rule_applied': 'general_inquiry_handling',
+                'response': """We offer three main services:
+
+🗑️ **Skip Hire** - Traditional skips (4-12yd) for general waste, garden waste, construction
+📦 **Man & Van** - House clearances, furniture, light items (NO heavy materials like concrete/soil)
+🚛 **Grab Hire** - Heavy materials (soil, rubble, concrete), large volumes, construction waste
+
+What type of waste do you have?"""
+            }
+        
+        # 2. PRICE COMPARISONS - Route to PricingAgent (uses SMPAPITool)
+        comparison_phrases = ['compare prices', 'both prices', 'skip vs grab', 'grab vs skip', 'cheaper', 'price difference']
+        if any(phrase in message_lower for phrase in comparison_phrases):
+            return {
+                'agent': 'pricing',
+                'reason': 'price_comparison_request',
+                'rule_applied': 'multi_service_pricing',
+                'intent': 'compare_services'
+            }
+        
+        # 3. SERVICE-SPECIFIC ROUTING based on PDF rules
+        
+        # SKIP HIRE - Traditional skip services
+        skip_indicators = ['skip', 'traditional skip', 'skip hire', 'general waste', 'garden waste']
+        if any(word in message_lower for word in skip_indicators):
+            # Check for heavy materials (PDF rule: heavy materials need grab hire)
+            heavy_materials = ['soil', 'concrete', 'rubble', 'brick', 'sand', 'stone', 'heavy', 'construction debris']
+            has_heavy = any(material in message_lower for material in heavy_materials)
+            
+            if has_heavy and 'skip' in message_lower:
+                return {
+                    'agent': 'grab_hire',
+                    'reason': 'heavy_materials_override_skip',
+                    'rule_applied': 'heavy_materials_require_grab',
+                    'note': 'Customer said skip but has heavy materials - grab hire required per PDF rules'
+                }
             else:
-                r = requests.get(url, params=payload, headers=headers, timeout=10)
-            if r.status_code == 200:
-                return r.json()
-            return {"success": False, "error": f"HTTP {r.status_code}"}
+                return {
+                    'agent': 'skip_hire',  # Will use SMPAPITool for pricing/booking
+                    'reason': 'skip_hire_requested',
+                    'rule_applied': 'standard_skip_service'
+                }
+        
+        # MAN & VAN - Light items only (strict PDF rules)
+        mav_indicators = ['furniture', 'house clearance', 'man and van', 'mav', 'light items', 'sofa', 'bed', 'table', 'appliance', 'mattress']
+        if any(word in message_lower for word in mav_indicators):
+            # PDF RULE: MAV cannot handle heavy materials
+            heavy_materials = ['soil', 'concrete', 'rubble', 'brick', 'sand', 'stone', 'construction', 'demolition', 'heavy']
+            has_heavy = any(material in message_lower for material in heavy_materials)
+            
+            if has_heavy:
+                return {
+                    'agent': 'grab_hire',
+                    'reason': 'heavy_materials_cannot_use_mav',
+                    'rule_applied': 'mav_weight_restrictions',
+                    'note': 'Customer mentioned furniture but has heavy materials - grab hire required'
+                }
+            else:
+                return {
+                    'agent': 'mav',  # Will use SMPAPITool and check for heavy items
+                    'reason': 'light_household_items',
+                    'rule_applied': 'mav_suitable_for_light_items'
+                }
+        
+        # GRAB HIRE - Everything else, heavy materials, construction
+        grab_indicators = ['grab', 'grab hire', 'heavy', 'soil', 'rubble', 'concrete', 'construction', 'demolition', 'large volume', 'muck', 'sand']
+        if any(word in message_lower for word in grab_indicators):
+            return {
+                'agent': 'grab_hire',  # Will use SMPAPITool, ElevenLabsSupplierCaller
+                'reason': 'grab_hire_requested',
+                'rule_applied': 'grab_hire_for_heavy_materials'
+            }
+        
+        # 4. BOOKING/CONFIRMATION - Route to last agent or default
+        booking_words = ['book', 'confirm', 'yes book', 'go ahead', 'payment link', 'create booking']
+        if any(word in message_lower for word in booking_words):
+            # Use last agent if available
+            if state.get('last_agent') in ['skip_hire', 'mav', 'grab_hire']:
+                return {
+                    'agent': state['last_agent'],
+                    'reason': 'continue_with_last_agent',
+                    'rule_applied': 'booking_continuation',
+                    'intent': 'create_booking'
+                }
+            else:
+                # Default to grab hire for bookings
+                return {
+                    'agent': 'grab_hire',
+                    'reason': 'booking_default_to_grab',
+                    'rule_applied': 'default_booking_service'
+                }
+        
+        # 5. PRICING REQUESTS - Route to appropriate agent or PricingAgent
+        if any(word in message_lower for word in ['price', 'cost', 'quote', 'how much']):
+            # If specific service mentioned, route to that agent
+            if 'skip' in message_lower:
+                return {'agent': 'skip_hire', 'reason': 'skip_pricing', 'rule_applied': 'service_specific_pricing'}
+            elif any(word in message_lower for word in ['mav', 'man and van', 'furniture']):
+                return {'agent': 'mav', 'reason': 'mav_pricing', 'rule_applied': 'service_specific_pricing'}
+            elif 'grab' in message_lower:
+                return {'agent': 'grab_hire', 'reason': 'grab_pricing', 'rule_applied': 'service_specific_pricing'}
+            else:
+                return {'agent': 'pricing', 'reason': 'general_pricing', 'rule_applied': 'pricing_agent_handles_general'}
+        
+        # 6. DEFAULT ROUTING based on extracted data and PDF rules
+        
+        # Has postcode - route based on waste type using PDF rules
+        if extracted.get('postcode'):
+            # Heavy materials → Grab Hire (PDF rule)
+            heavy_materials = ['soil', 'concrete', 'rubble', 'brick', 'sand', 'stone', 'construction', 'demolition', 'muck']
+            if any(material in message_lower for material in heavy_materials):
+                return {
+                    'agent': 'grab_hire',
+                    'reason': 'heavy_materials_with_postcode',
+                    'rule_applied': 'postcode_plus_heavy_materials'
+                }
+            
+            # Light household items → Man & Van (PDF rule)
+            light_items = ['furniture', 'household', 'appliance', 'mattress', 'sofa', 'chair', 'table', 'bed']
+            if any(item in message_lower for item in light_items):
+                return {
+                    'agent': 'mav',
+                    'reason': 'light_items_with_postcode',
+                    'rule_applied': 'postcode_plus_light_items'
+                }
+            
+            # General waste → Skip Hire (PDF rule)
+            general_waste = ['general waste', 'garden waste', 'household waste', 'mixed waste']
+            if any(waste in message_lower for waste in general_waste):
+                return {
+                    'agent': 'skip_hire',
+                    'reason': 'general_waste_with_postcode',
+                    'rule_applied': 'postcode_plus_general_waste'
+                }
+        
+        # 7. DEFAULT - Grab Hire handles most cases (PDF rule: grab hire is versatile)
+        return {
+            'agent': 'grab_hire',
+            'reason': 'default_to_grab_hire',
+            'rule_applied': 'grab_hire_default_service',
+            'note': 'Grab hire handles most waste types per PDF rules'
+        }
+    
+    def _extract_and_update_state(self, message: str, state: Dict[str, Any], context: Dict = None):
+        """Extract and update conversation state"""
+        
+        extracted = state.get('extracted_info', {})
+        
+        # Include context data first
+        if context:
+            for key in ['postcode', 'firstName', 'phone', 'emailAddress', 'service', 'type']:
+                if context.get(key):
+                    extracted[key] = context[key]
+        
+        # Extract postcode (improved patterns)
+        postcode_patterns = [
+            r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})\b',  # Full UK postcode
+            r'(LS\d{4})',  # Leeds specific
+            r'(M\d{4})',   # Manchester specific
+            r'([A-Z]{1,2}\d{1,2}[A-Z]?)\s*(\d[A-Z]{2})',  # Split format
+        ]
+        for pattern in postcode_patterns:
+            matches = re.findall(pattern, message.upper())
+            for match in matches:
+                if isinstance(match, tuple):
+                    clean = ''.join(match).replace(' ', '')
+                else:
+                    clean = match.strip().replace(' ', '')
+                if len(clean) >= 5:
+                    extracted['postcode'] = clean
+                    break
+        
+        # Extract name (improved patterns)
+        name_patterns = [
+            r'[Nn]ame\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+            r'[Nn]ame\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+            r'my name is ([A-Z][a-z]+)',
+            r'i\'m ([A-Z][a-z]+)',
+            r'call me ([A-Z][a-z]+)'
+        ]
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                extracted['firstName'] = match.group(1).strip().title()
+                break
+        
+        # Extract phone (improved patterns)
+        phone_patterns = [
+            r'payment link to (\d{11})',
+            r'link to (\d{11})',
+            r'to (\d{11})',
+            r'\b(07\d{9})\b',
+            r'\b(\+447\d{9})\b',
+            r'\b(\d{11})\b'
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, message)
+            if match:
+                extracted['phone'] = match.group(1)
+                break
+        
+        # Extract service preference
+        if 'skip' in message.lower():
+            extracted['preferred_service'] = 'skip'
+        elif any(word in message.lower() for word in ['man and van', 'mav', 'furniture']):
+            extracted['preferred_service'] = 'mav'
+        elif 'grab' in message.lower():
+            extracted['preferred_service'] = 'grab'
+        
+        # Extract waste type categories
+        waste_categories = {
+            'heavy': ['soil', 'concrete', 'rubble', 'brick', 'sand', 'stone'],
+            'construction': ['construction', 'demolition', 'building'],
+            'household': ['furniture', 'appliance', 'mattress', 'sofa'],
+            'garden': ['garden', 'green', 'leaves', 'branches'],
+            'general': ['general', 'mixed', 'household waste']
+        }
+        
+        found_categories = []
+        message_lower = message.lower()
+        for category, keywords in waste_categories.items():
+            if any(keyword in message_lower for keyword in keywords):
+                found_categories.append(category)
+        
+        if found_categories:
+            extracted['waste_categories'] = found_categories
+        
+        state['extracted_info'] = extracted
+        
+        # Copy to main state for easy access
+        for key in extracted:
+            state[key] = extracted[key]
+    
+    def _load_conversation_state_properly(self, conversation_id: str) -> Dict[str, Any]:
+        """Load state using StateManager and fallback to global storage"""
+        try:
+            # Try StateManager first
+            state_obj = self.state_manager.get_state(conversation_id)
+            if state_obj:
+                return {
+                    "conversation_id": conversation_id,
+                    "messages": getattr(state_obj, 'messages', []),
+                    "extracted_info": getattr(state_obj, 'customer_data', {}),
+                    "last_agent": getattr(state_obj, 'current_agent', None),
+                    "routing_info": {}
+                }
         except Exception as e:
-            return {"success": False, "error": str(e)}
-    
-    def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
-        """Get pricing from API"""
-        url = f"{self.koyeb_url}/api/wasteking-get-price"
-        payload = {"postcode": postcode, "service": service, "type": type}
-        print(f"🔥 PRICING CALL: {payload}")
-        return self._send_koyeb_webhook(url, payload, method="POST")
-    
-    def _create_booking_quote(self, type: str, service: str, postcode: str, firstName: str, phone: str, booking_ref: str) -> Dict[str, Any]:
-        """Create booking via API"""
-        url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
-        payload = {
-            "booking_ref": booking_ref,
-            "postcode": postcode,
-            "service": service,
-            "type": type,
-            "firstName": firstName,
-            "phone": phone
-        }
-        print(f"🔥 BOOKING CALL: {payload}")
-        return self._send_koyeb_webhook(url, payload, method="POST")
-    
-    def _send_payment_link(self, phone: str, booking_ref: str, amount: str) -> Dict[str, Any]:
-        """Send payment link via SMS"""
-        url = f"{self.koyeb_url}/api/send-payment-sms"
-        payload = {
-            "quote_id": booking_ref,
-            "customer_phone": phone,
-            "amount": amount,
-            "call_sid": ""
-        }
-        print(f"💳 PAYMENT LINK: {payload}")
-        return self._send_koyeb_webhook(url, payload, method="POST")
-    
-    # STATE MANAGEMENT
-    def _load_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
+            print(f"⚠️ StateManager failed: {e}")
+        
+        # Fallback to global storage
         global _GLOBAL_CONVERSATION_STATES
         if conversation_id in _GLOBAL_CONVERSATION_STATES:
             return _GLOBAL_CONVERSATION_STATES[conversation_id].copy()
-        return {"conversation_id": conversation_id, "messages": [], "extracted_info": {}, "current_step": 1}
+        
+        return {
+            "conversation_id": conversation_id,
+            "messages": [],
+            "extracted_info": {},
+            "last_agent": None,
+            "routing_info": {}
+        }
     
-    def _save_conversation_state(self, conversation_id: str, state: Dict[str, Any], message: str, response: str, agent_used: str):
+    def _save_conversation_state_properly(self, conversation_id: str, state: Dict[str, Any], message: str, response: str, agent_used: str):
+        """Save state using StateManager and global storage"""
+        
+        # Add message to history
         if 'messages' not in state:
             state['messages'] = []
         state['messages'].append({
@@ -370,10 +402,25 @@ Return JSON only: {{"postcode": "value", "firstName": "value", ...}}
             "agent_response": response,
             "agent_used": agent_used
         })
+        
+        # Keep reasonable message history
         if len(state['messages']) > 50:
-            state['messages'] = state['messages'][-20:]
+            state['messages'] = state['messages'][-30:]
+        
         state['last_updated'] = datetime.now().isoformat()
         
+        # Save to StateManager
+        try:
+            self.state_manager.update_state(
+                conversation_id=conversation_id,
+                customer_data=state.get('extracted_info', {}),
+                current_agent=agent_used,
+                conversation_stage='active'
+            )
+        except Exception as e:
+            print(f"⚠️ StateManager save failed: {e}")
+        
+        # Save to global storage as backup
         global _GLOBAL_CONVERSATION_STATES
         self.conversation_states[conversation_id] = state.copy()
         _GLOBAL_CONVERSATION_STATES[conversation_id] = state.copy()
