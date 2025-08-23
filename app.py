@@ -26,6 +26,7 @@ class RulesProcessor:
         self.rules_data = self._load_all_rules()
     
     def _load_all_rules(self) -> Dict[str, Any]:
+        """Load rules from PDF first, fallback to hardcoded if PDF not available"""
         pdf_text = self._load_rules_from_pdf()
         
         if pdf_text:
@@ -36,6 +37,7 @@ class RulesProcessor:
             return self._get_hardcoded_rules()
     
     def _load_rules_from_pdf(self) -> str:
+        """Extract text from the WasteKing rules PDF"""
         try:
             if not Path(self.pdf_path).exists():
                 return ""
@@ -54,6 +56,7 @@ class RulesProcessor:
             return ""
     
     def _parse_wasteking_pdf(self, pdf_text: str) -> Dict[str, Any]:
+        """Parse the WasteKing PDF into structured rules"""
         return {
             "lock_rules": self._extract_lock_rules(pdf_text),
             "exact_scripts": self._extract_exact_scripts(pdf_text),
@@ -69,6 +72,7 @@ class RulesProcessor:
         }
     
     def _extract_lock_rules(self, text: str) -> Dict[str, str]:
+        """Extract LOCK 0-11 mandatory enforcement rules"""
         return {
             "LOCK_0_DATETIME": "CRITICAL: Call get_current_datetime() IMMEDIATELY at conversation start",
             "LOCK_1_NO_GREETING": "NEVER say 'Hi I am Thomas' or any greeting",
@@ -214,7 +218,7 @@ class SMPAPITool(BaseTool):
         payload = {"bookingRef": booking_ref, "customer": customer_details, "service": service_details}
         return self._send_request("api/booking/update", payload)
         
-    def _update_booking_with_quote(self, booking_ref: str) -> Dict[str, Any]:
+    def _update_booking_with_quote(self, booking_ref: str, **kwargs) -> Dict[str, Any]:
         """Step 4: Finalizes the booking and gets the payment URL."""
         payload = {"bookingRef": booking_ref, "action": "quote", "postPaymentUrl": "https://wasteking.co.uk/thank-you/"}
         return self._send_request("api/booking/update", payload)
@@ -407,10 +411,16 @@ def _check_transfer_needed_with_office_hours(message: str, data: Dict[str, Any],
 def _extract_data(message: str, context: Dict = None) -> Dict[str, Any]:
     data = context.copy() if context else {}
     
-    postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})', message.upper())
+    # Corrected postcode extraction to handle partial codes
+    postcode_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b', message.upper())
+    outward_code_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?)\b', message.upper())
+
     if postcode_match:
         data['postcode'] = postcode_match.group(1).replace(' ', '')
-        print(f"✅ Extracted postcode: {data['postcode']}")
+        print(f"✅ Extracted full postcode: {data['postcode']}")
+    elif outward_code_match:
+        data['postcode'] = outward_code_match.group(1).replace(' ', '')
+        print(f"⚠️ Extracted partial postcode: {data['postcode']}")
     
     if 'skip' in message.lower():
         data['service'] = 'skip'
@@ -478,6 +488,10 @@ def _determine_step(data: Dict[str, Any], message: str) -> str:
     price_request = any(word in message_lower for word in ['price', 'availability', 'cost', 'quote', 'confirm price', 'total price', 'including vat'])
     has_required_pricing_data = data.get('service') and data.get('type') and data.get('postcode')
     
+    # Corrected logic to check for complete postcode
+    if data.get('postcode') and len(data.get('postcode')) < 5:
+        return 'postcode'
+
     if price_request and has_required_pricing_data and not data.get('has_pricing'):
         print(f"💰 AGENT: Customer requests price and has required data - going to pricing")
         return 'price'
@@ -544,13 +558,13 @@ def _get_pricing(data: Dict[str, Any], tools: List[BaseTool]) -> str:
     except Exception as e:
         return f"Error getting pricing: {str(e)}"
 
-def _create_booking_with_payment_and_sms(data: Dict[str, Any], tools: List[BaseTool]) -> str:
+def _create_booking_with_payment_and_sms(self, data: Dict[str, Any]) -> str:
     print(f"🔥🔥🔥 AGENT: 4-STEP BOOKING PROCESS STARTED 🔥🔥🔥")
     
     try:
         smp_tool = None
         sms_tool = None
-        for tool in tools:
+        for tool in self.tools:
             if hasattr(tool, 'name'):
                 if tool.name == 'smp_api':
                     smp_tool = tool
@@ -684,7 +698,7 @@ class SkipHireAgent:
         if current_step == 'price':
             response = _get_pricing(combined_data, self.tools)
         elif current_step == 'booking':
-            response = _create_booking_with_payment_and_sms(combined_data, self.tools)
+            response = _create_booking_with_payment_and_sms(self, combined_data)
         else:
             response = "What's your name?"
             # Add logic for other steps
@@ -727,7 +741,7 @@ class ManAndVanAgent:
         if current_step == 'price':
             response = _get_pricing(combined_data, self.tools)
         elif current_step == 'booking':
-            response = _create_booking_with_payment_and_sms(combined_data, self.tools)
+            response = _create_booking_with_payment_and_sms(self, combined_data)
         else:
             response = "What's your name?"
             # Add logic for other steps
@@ -770,7 +784,7 @@ class GrabHireAgent:
         if current_step == 'price':
             response = _get_pricing(combined_data, self.tools)
         elif current_step == 'booking':
-            response = _create_booking_with_payment_and_sms(combined_data, self.tools)
+            response = _create_booking_with_payment_and_sms(self, combined_data)
         else:
             response = "What's your name?"
             # Add logic for other steps
