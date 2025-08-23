@@ -31,6 +31,9 @@ class AgentOrchestrator:
                 # In real implementation, this would extract PDF text
                 # For now, return the PDF content as text that can be parsed
                 return """
+
+                Try To understand what user is saying. If you can find the user intent matching with hardcoded keyword match, add that keyword
+                so if the use says I dont have any issues with truck coming, that means you can pass the access, similaly do for all
 TRANSFER THRESHOLDS (Office Hours Only):
 Skip Hire: NO LIMIT (Handle all amounts)
 Man & Van: £500+ Transfer
