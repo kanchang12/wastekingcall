@@ -155,46 +155,47 @@ class RulesProcessor:
 # ===============================
 # SMP API TOOL CLASS - UPDATED FOR 3-STEP PROCESS
 # ===============================
+# ===============================
+# SMP API TOOL CLASS - UPDATED FOR YOUR 4-STEP PROCESS
+# ===============================
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
-    description: str = """WasteKing API for 3-step booking: create_booking_ref, get_price_with_booking_ref, create_payment_link"""
-    koyeb_url: str = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app"
+    description: str = """WasteKing API for a 4-step booking process: create_booking, update_booking_with_search, update_booking_with_details, update_booking_with_quote"""
+    # CORRECTED URL BASED ON YOUR CURL COMMANDS
+    base_url: str = "https://wk-smp-api-dev.azurewebsites.net"
+    access_token: str = "wk-KZPY-tGF-@d.Aby9fpvMC_VVWkX-GN.i7jCBhF3xceoFfhmawaNc.RH.G_-kwk8*"
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         print(f"\n🔧 ==================== SMP API TOOL CALLED ====================")
         print(f"🔧 ACTION: {action}")
         print(f"🔧 PARAMETERS: {json.dumps(kwargs, indent=2)}")
-        print(f"🔧 KOYEB URL: {self.koyeb_url}")
+        print(f"🔧 BASE URL: {self.base_url}")
         
         try:
-            print(f"🔧 SMP API TOOL: Routing to action handler...")
-            if action == "create_booking_ref":
-                print(f"🔧 SMP API TOOL: Calling _create_booking_ref()")
-                result = self._create_booking_ref(**kwargs)
-            elif action == "get_price_with_booking_ref":
-                print(f"🔧 SMP API TOOL: Calling _get_price_with_booking_ref()")
-                result = self._get_price_with_booking_ref(**kwargs)
-            elif action == "create_payment_link":
-                print(f"🔧 SMP API TOOL: Calling _create_payment_link()")
-                result = self._create_payment_link(**kwargs)
-            elif action == "get_pricing":
-                print(f"🔧 SMP API TOOL: Calling _get_pricing() (legacy)")
-                result = self._get_pricing(**kwargs)
-            elif action == "create_booking_quote":
-                print(f"🔧 SMP API TOOL: Calling _create_booking_quote() (legacy)")
-                result = self._create_booking_quote(**kwargs)
-            elif action == "take_payment":
-                print(f"🔧 SMP API TOOL: Calling _take_payment()")
-                result = self._take_payment(**kwargs)
-            elif action == "call_supplier":
-                print(f"🔧 SMP API TOOL: Calling _call_supplier()")
-                result = self._call_supplier(**kwargs)
+            if action == "create_booking":
+                result = self._create_booking(**kwargs)
+            elif action == "update_booking_with_search":
+                result = self._update_booking_with_search(**kwargs)
+            elif action == "update_booking_with_details":
+                result = self._update_booking_with_details(**kwargs)
+            elif action == "update_booking_with_quote":
+                result = self._update_booking_with_quote(**kwargs)
+            elif action == "get_pricing": # Old function call, now passes
+                print(f"⚠️ LEGACY ACTION: {action} is deprecated and will not run")
+                result = {"success": False, "error": f"Deprecated action: {action}"}
+            elif action == "create_booking_quote": # Old function call, now passes
+                print(f"⚠️ LEGACY ACTION: {action} is deprecated and will not run")
+                result = {"success": False, "error": f"Deprecated action: {action}"}
+            elif action == "take_payment": # Old function call, now passes
+                print(f"⚠️ LEGACY ACTION: {action} is deprecated and will not run")
+                result = {"success": False, "error": f"Deprecated action: {action}"}
+            elif action == "call_supplier": # Old function call, now passes
+                print(f"⚠️ LEGACY ACTION: {action} is deprecated and will not run")
+                result = {"success": False, "error": f"Deprecated action: {action}"}
             else:
-                print(f"❌ SMP API TOOL: Unknown action: {action}")
                 result = {"success": False, "error": f"Unknown action: {action}"}
             
-            print(f"🔧 TOOL RESULT:")
-            print(f"🔧 {json.dumps(result, indent=2)}")
+            print(f"🔧 TOOL RESULT: {json.dumps(result, indent=2)}")
             print(f"🔧 ==================== SMP API TOOL FINISHED ====================\n")
             
             return result
@@ -202,221 +203,72 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             error_result = {"success": False, "error": str(e)}
             print(f"❌ SMP API TOOL ERROR: {error_result}")
-            print(f"🔧 ==================== SMP API TOOL FAILED ====================\n")
             return error_result
 
-    def _send_koyeb_webhook(self, url: str, payload: dict, method: str = "POST") -> dict:
+    def _send_request(self, endpoint: str, payload: dict) -> dict:
+        headers = {
+            "Content-Type": "application/json",
+            "x-wasteking-request": self.access_token
+        }
+        url = f"{self.base_url}/{endpoint}"
+        
         try:
-            headers = {"Content-Type": "application/json"}
-            if method.upper() == "POST":
-                r = requests.post(url, json=payload, headers=headers, timeout=10)
-                if r.status_code == 404:  # fallback
-                    r = requests.get(url, params=payload, headers=headers, timeout=10)
-            else:
-                r = requests.get(url, params=payload, headers=headers, timeout=10)
-    
+            r = requests.post(url, json=payload, headers=headers, timeout=10)
             if r.status_code == 200:
                 return r.json()
-            return {"success": False, "error": f"HTTP {r.status_code}"}
+            return {"success": False, "error": f"HTTP {r.status_code}", "response": r.text}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-
-    # NEW 3-STEP BOOKING PROCESS
+    # OLD/DEPRECATED FUNCTIONS - THESE NOW USE 'pass'
     def _create_booking_ref(self, **kwargs) -> Dict[str, Any]:
-        """STEP 1: Create booking reference"""
-        print(f"📋 STEP 1: Creating booking reference...")
-        print(f"🔥 BOOKING REF PAYLOAD:")
-        print(f"    firstName: {kwargs.get('firstName')}")
-        print(f"    phone: {kwargs.get('phone')}")
-        print(f"    postcode: {kwargs.get('postcode')}")
-        print(f"    service: {kwargs.get('service')}")
-        print(f"    type: {kwargs.get('type')}")
-        
-        url = f"{self.koyeb_url}/api/wasteking-create-booking-ref"
-        payload = {
-            "firstName": kwargs.get('firstName'),
-            "phone": kwargs.get('phone'),
-            "postcode": kwargs.get('postcode'),
-            "service": kwargs.get('service'),
-            "type": kwargs.get('type')
-        }
-        print(f"🔥 CREATE BOOKING REF CALL: {payload}")
-        result = self._send_koyeb_webhook(url, payload, method="POST")
-        
-        if result.get('success'):
-            booking_ref = result.get('booking_ref')
-            print(f"🔥🔥🔥 BOOKING REF CREATED: {booking_ref} 🔥🔥🔥")
-        else:
-            print(f"❌ BOOKING REF FAILED: {result}")
-        
-        return result
+        """OLD/DEPRECATED FUNCTION"""
+        pass
     
     def _get_price_with_booking_ref(self, **kwargs) -> Dict[str, Any]:
-        """STEP 2: Get price using booking reference"""
-        print(f"💰 STEP 2: Getting price with booking reference...")
-        print(f"🔥 PRICE WITH REF PAYLOAD:")
-        print(f"    booking_ref: {kwargs.get('booking_ref')}")
-        print(f"    postcode: {kwargs.get('postcode')}")
-        print(f"    service: {kwargs.get('service')}")
-        print(f"    type: {kwargs.get('type')}")
-        
-        url = f"{self.koyeb_url}/api/wasteking-get-price-with-ref"
-        payload = {
-            "booking_ref": kwargs.get('booking_ref'),
-            "postcode": kwargs.get('postcode'),
-            "service": kwargs.get('service'),
-            "type": kwargs.get('type')
-        }
-        print(f"🔥 GET PRICE WITH REF CALL: {payload}")
-        result = self._send_koyeb_webhook(url, payload, method="POST")
-        
-        if result.get('success'):
-            price = result.get('price', 'N/A')
-            print(f"🔥🔥🔥 PRICE WITH REF SUCCESS: {price} 🔥🔥🔥")
-        else:
-            print(f"❌ PRICE WITH REF FAILED: {result}")
-        
-        return result
+        """OLD/DEPRECATED FUNCTION"""
+        pass
     
     def _create_payment_link(self, **kwargs) -> Dict[str, Any]:
-        """STEP 3: Create payment link"""
-        print(f"💳 STEP 3: Creating payment link...")
-        print(f"🔥 PAYMENT LINK PAYLOAD:")
-        print(f"    booking_ref: {kwargs.get('booking_ref')}")
-        print(f"    amount: {kwargs.get('amount')}")
-        print(f"    customer_phone: {kwargs.get('customer_phone')}")
-        
-        url = f"{self.koyeb_url}/api/wasteking-create-payment-link"
-        payload = {
-            "booking_ref": kwargs.get('booking_ref'),
-            "amount": kwargs.get('amount'),
-            "customer_phone": kwargs.get('customer_phone')
-        }
-        print(f"🔥 CREATE PAYMENT LINK CALL: {payload}")
-        result = self._send_koyeb_webhook(url, payload, method="POST")
-        
-        if result.get('success'):
-            payment_link = result.get('payment_link')
-            print(f"🔥🔥🔥 PAYMENT LINK CREATED: {payment_link} 🔥🔥🔥")
-        else:
-            print(f"❌ PAYMENT LINK FAILED: {result}")
-        
-        return result
-
-    # LEGACY METHODS (KEEP FOR COMPATIBILITY)
+        """OLD/DEPRECATED FUNCTION"""
+        pass
+    
     def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
-        """Legacy pricing - always available"""
-        print(f"🔥 LEGACY PRICING STRUCTURE:")
-        print(f"    postcode: {postcode}")
-        print(f"    service: {service}")
-        print(f"    type: {type}")
-        
-        url = f"{self.koyeb_url}/api/wasteking-get-price"
-        payload = {"postcode": postcode, "service": service, "type": type}
-        print(f"🔥 LEGACY PRICING CALL: {payload}")
-        result = self._send_koyeb_webhook(url, payload, method="POST")
-        
-        if result.get('success'):
-            price = result.get('price', result.get('service_price', 'N/A'))
-            print(f"🔥🔥🔥 PRICING SUCCESS: {price} 🔥🔥🔥")
-        else:
-            print(f"❌ PRICING FAILED: {result}")
-        
-        return result
+        """OLD/DEPRECATED FUNCTION"""
+        pass
 
     def _create_booking_quote(self, **kwargs) -> Dict[str, Any]:
-        """Legacy booking quote function"""
-        print(f"📋 LEGACY CREATE_BOOKING_QUOTE:")
-        print(f" 👤 Name: {kwargs.get('firstName')}")
-        print(f" 📞 Phone: {kwargs.get('phone')}")
-        print(f" 📍 Postcode: {kwargs.get('postcode')}")
-        print(f" 🚛 Service: {kwargs.get('service')}")
-        
-        required = ['postcode', 'service', 'type', 'firstName', 'phone']
-        for field in required:
-            if not kwargs.get(field):
-                return {"success": False, "error": f"Missing: {field}"}
-        
-        # Clean postcode
-        postcode = kwargs['postcode'].upper().replace(" ", "").strip()
-        
-        data_payload = {
-            "postcode": postcode,
-            "service": kwargs.get("service"),
-            "type": kwargs.get("type"),
-            "firstName": kwargs.get("firstName"),
-            "phone": kwargs.get("phone"),
-            "lastName": kwargs.get("lastName", ""),
-            "email": kwargs.get("emailAddress", ""),
-            "date": kwargs.get("date", ""),
-            "time": kwargs.get("time", "")
-        }
-        
-        url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
-        
-        # Try POST first
-        response = self._send_koyeb_webhook(url, data_payload, "POST")
-        
-        # If POST fails, try GET
-        if not response.get("success"):
-            response = self._send_koyeb_webhook(url, data_payload, "GET")
-        
-        if response.get("success"):
-            return {
-                "success": True,
-                "message": "Booking confirmed",
-                "booking_ref": response.get('booking_ref'),
-                "payment_link": response.get('payment_link'),
-                "final_price": response.get('price'),
-                "customer_phone": kwargs.get("phone")
-            }
-        
-        return {"success": False, "message": "Booking failed"}
+        """OLD/DEPRECATED FUNCTION"""
+        pass
+
+    def _take_payment(self, customer_phone: Optional[str] = None, quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """OLD/DEPRECATED FUNCTION"""
+        pass
+
+    def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """OLD/DEPRECATED FUNCTION"""
+        pass
+
+    # NEW FUNCTIONS FOR THE 4-STEP PROCESS
+    def _create_booking(self, **kwargs) -> Dict[str, Any]:
+        """Step 1: Creates a new booking and returns a booking reference."""
+        payload = {"type": "chatbot", "source": "wasteking.co.uk"}
+        return self._send_request("api/booking/create", payload)
     
-    def _take_payment(self, customer_phone: Optional[str] = None, quote_id: Optional[str] = None, 
-                     amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Payment processing for AI agents"""
-        print(f"📱 TAKE_PAYMENT:")
-        print(f"   📞 Phone: {customer_phone}")
-        print(f"   📋 Quote ID: {quote_id}")
-        print(f"   💰 Amount: £{amount}")
-        
-        if not customer_phone or not quote_id:
-            return {"success": False, "error": "Missing phone or quote_id"}
-        
-        payload = {
-            "quote_id": quote_id,
-            "customer_phone": customer_phone,
-            "amount": amount or "1",
-            "call_sid": kwargs.get("call_sid", "")
-        }
-        
-        url = f"{self.koyeb_url}/api/send-payment-sms"
-        response = self._send_koyeb_webhook(url, payload, "POST")
-        
-        if response.get("status") == "success":
-            return {
-                "success": True,
-                "message": "Payment link sent",
-                "booking_ref": quote_id,
-                "payment_link": response.get("payment_link_used"),
-                "final_price": response.get("amount", amount),
-                "customer_phone": customer_phone,
-                "sms_sent": True
-            }
-        
-        return {"success": False, "error": "Payment failed"}
-    
-    def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
-                      booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Supplier calling for AI agents"""
-        print(f"📞 CALL_SUPPLIER:")
-        print(f"   📞 Phone: {supplier_phone}")
-        print(f"   👤 Name: {supplier_name}")
-        print(f"   📋 Ref: {booking_ref}")
-        
-        return {"success": True, "call_made": True, "supplier_name": supplier_name}
+    def _update_booking_with_search(self, booking_ref: str, postcode: str, service: str) -> Dict[str, Any]:
+        """Step 2: Updates a booking with search details to get prices."""
+        payload = {"bookingRef": booking_ref, "search": {"postCode": postcode, "service": service}}
+        return self._send_request("api/booking/update", payload)
+
+    def _update_booking_with_details(self, booking_ref: str, customer_details: dict, service_details: dict) -> Dict[str, Any]:
+        """Step 3: Updates a booking with customer and service details."""
+        payload = {"bookingRef": booking_ref, "customer": customer_details, "service": service_details}
+        return self._send_request("api/booking/update", payload)
+
+    def _update_booking_with_quote(self, booking_ref: str) -> Dict[str, Any]:
+        """Step 4: Finalizes the booking and gets the payment URL."""
+        payload = {"bookingRef": booking_ref, "action": "quote", "postPaymentUrl": "https://wasteking.co.uk/thank-you/"}
+        return self._send_request("api/booking/update", payload)
 
 # ===============================
 # DATETIME TOOL CLASS
@@ -916,24 +768,13 @@ Make the sale unless office hours + transfer rules require it."""),
         except Exception as e:
             print(f"❌ SKIP AGENT: PRICING EXCEPTION: {str(e)}")
             return f"Error getting pricing: {str(e)}"
-    
-    def _create_booking_with_payment_and_sms(self, data: Dict[str, Any]) -> str:
-        """NEW 3-STEP BOOKING PROCESS WITH CONSOLE PRINTS"""
         
-        print(f"🔥🔥🔥 SKIP AGENT: 3-STEP BOOKING PROCESS STARTED 🔥🔥🔥")
-        print(f"📋 BOOKING DATA CHECK:")
-        print(f"    Service: {data.get('service')}")
-        print(f"    Type: {data.get('type')}")
-        print(f"    Postcode: {data.get('postcode')}")
-        print(f"    Name: {data.get('firstName')}")
-        print(f"    Phone: {data.get('phone')}")
-        print(f"    Step 1: Create booking reference")
-        print(f"    Step 2: Get price with booking reference")
-        print(f"    Step 3: Create payment link")
-        print(f"    Step 4: Send SMS with payment link")
+    def _create_booking_with_payment_and_sms(self, data: Dict[str, Any]) -> str:
+        """Orchestrates the 4-step booking process to create a booking and get a payment link."""
+        
+        print(f"🔥🔥🔥 AGENT: 4-STEP BOOKING PROCESS STARTED 🔥🔥🔥")
         
         try:
-            # Find SMP and SMS tools
             smp_tool = None
             sms_tool = None
             for tool in self.tools:
@@ -943,90 +784,87 @@ Make the sale unless office hours + transfer rules require it."""),
                     elif tool.name == 'sms_tool':
                         sms_tool = tool
             
-            if not smp_tool:
-                print("❌ BOOKING FAILED: SMPAPITool not found")
-                return "Booking tool not available"
+            if not smp_tool: return "Booking tool not available"
             
-            # STEP 1: CREATE BOOKING REF
-            print(f"🔄 STEP 1: Creating booking reference...")
-            booking_ref_result = smp_tool._run(
-                action="create_booking_ref",
-                firstName=data.get('firstName'),
-                phone=data.get('phone'),
-                postcode=data.get('postcode'),
-                service=data.get('service'),
-                type=data.get('type')
-            )
+            # Step 1: Create a new booking
+            print(f"🔄 STEP 1: Creating a new booking reference...")
+            booking_result = smp_tool._create_booking()
+            if not booking_result.get('success'):
+                return f"Booking failed: {booking_result.get('error')}"
+            booking_ref = booking_result.get('bookingRef')
+            print(f"✅ Step 1 SUCCESS: Booking reference created: {booking_ref}")
             
-            if not booking_ref_result.get('success'):
-                print(f"❌ STEP 1 FAILED: {booking_ref_result.get('error')}")
-                return f"Failed to create booking reference: {booking_ref_result.get('error')}"
-            
-            booking_ref = booking_ref_result.get('booking_ref')
-            print(f"🔥🔥🔥 STEP 1 SUCCESS: BOOKING REFERENCE = {booking_ref} 🔥🔥🔥")
-            
-            # STEP 2: GET PRICE USING BOOKING_REF
-            print(f"🔄 STEP 2: Getting price using booking_ref...")
-            pricing_result = smp_tool._run(
-                action="get_price_with_booking_ref",
+            # Step 2: Update with search details to get pricing
+            print(f"🔄 STEP 2: Updating with search to get pricing...")
+            search_result = smp_tool._update_booking_with_search(
                 booking_ref=booking_ref,
                 postcode=data.get('postcode'),
-                service=data.get('service'),
-                type=data.get('type')
+                service=data.get('service')
             )
+            if not search_result.get('success'):
+                return f"Pricing failed: {search_result.get('error')}"
             
-            if not pricing_result.get('success'):
-                print(f"❌ STEP 2 FAILED: {pricing_result.get('error')}")
-                return f"Failed to get pricing: {pricing_result.get('error')}"
+            # Extract the price for the specific service type (e.g., '8yd' for skip hire)
+            price = "N/A"
+            for item in search_result.get('resultItems', []):
+                if item.get('type') == data.get('type'):
+                    price = item.get('price')
+                    break
             
-            price = pricing_result.get('price')
-            print(f"🔥🔥🔥 STEP 2 SUCCESS: PRICE = £{price} 🔥🔥🔥")
+            data['price'] = price
+            print(f"✅ Step 2 SUCCESS: Price for {data.get('type')} is {price}")
             
-            # STEP 3: CREATE PAYMENT LINK
-            print(f"🔄 STEP 3: Creating payment link...")
-            payment_result = smp_tool._run(
-                action="create_payment_link",
+            # Step 3: Update with customer and service details
+            print(f"🔄 STEP 3: Updating with customer and service details...")
+            customer_details = {
+                "firstName": data.get('firstName', "Guest"),
+                "phone": data.get('phone', "N/A"),
+                "addressPostcode": data.get('postcode', "N/A")
+            }
+            service_details = {
+                "service": data.get('service', "N/A"),
+                "date": data.get('preferred_date', "N/A"),
+                "placement": "drive",
+                "notes": "bricks and mortar waste"
+            }
+            details_result = smp_tool._update_booking_with_details(
                 booking_ref=booking_ref,
-                amount=price,
-                customer_phone=data.get('phone')
+                customer_details=customer_details,
+                service_details=service_details
             )
+            if not details_result.get('success'):
+                return f"Booking details update failed: {details_result.get('error')}"
+            print("✅ Step 3 SUCCESS: Booking details updated.")
             
+            # Step 4: Finalize the booking and get payment link
+            print(f"🔄 STEP 4: Finalizing quote and creating payment link...")
+            payment_result = smp_tool._update_booking_with_quote(
+                booking_ref=booking_ref
+            )
             if not payment_result.get('success'):
-                print(f"❌ STEP 3 FAILED: {payment_result.get('error')}")
-                return f"Failed to create payment link: {payment_result.get('error')}"
+                return f"Payment link creation failed: {payment_result.get('error')}"
             
             payment_link = payment_result.get('payment_link')
-            print(f"🔥🔥🔥 STEP 3 SUCCESS: PAYMENT LINK = {payment_link} 🔥🔥🔥")
+            print(f"🔥🔥🔥 Step 4 SUCCESS: Payment link created: {payment_link} 🔥🔥🔥")
             
-            # STEP 4: SEND SMS VIA TWILIO
-            print(f"🔄 STEP 4: Sending SMS via Twilio...")
-            sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} skip booking is confirmed! Ref: {booking_ref}, Price: £{price}"
+            # Send the SMS with the payment link
+            sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} {data.get('service')} booking is confirmed! Ref: {booking_ref}, Price: {price}"
             
             if sms_tool:
-                print(f"📱 SMS MESSAGE: {sms_message}")
-                print(f"📱 SENDING TO: {data.get('phone')}")
-                print(f"💳 PAYMENT LINK: {payment_link}")
-                
                 sms_result = sms_tool._run(
                     to_number=data.get('phone'),
                     message=sms_message,
                     payment_link=payment_link
                 )
-                
-                print(f"📱 SMS RESULT: {json.dumps(sms_result, indent=2)}")
-                
                 if sms_result.get('success'):
-                    print(f"🔥🔥🔥 STEP 4 SUCCESS: SMS SENT SUCCESSFULLY 🔥🔥🔥")
                     data['has_booking'] = True
-                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {data.get('phone')} via SMS."
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}. Payment link sent to {data.get('phone')} via SMS."
                 else:
-                    print(f"❌ STEP 4 FAILED: SMS sending failed: {sms_result.get('error')}")
                     data['has_booking'] = True
-                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}. Payment link: {payment_link}"
             else:
-                print(f"⚠️ SMS TOOL NOT FOUND - Booking created but no SMS sent")
                 data['has_booking'] = True
-                return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
+                return f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}. Payment link: {payment_link}"
                 
         except Exception as e:
             print(f"❌ CRITICAL ERROR IN BOOKING PROCESS: {str(e)}")
