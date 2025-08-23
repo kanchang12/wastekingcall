@@ -195,41 +195,64 @@ Analyze this customer message and extract information:
 "{message}"
 
 Extract ONLY if clearly stated:
-- postcode: UK postcode (complete format like M11AB, not partial)
+- postcode: UK postcode (complete format like M11AB, not partial like M1 or Manchester)
 - firstName: customer's first name  
 - phone: phone number
 - size: skip size (4yd, 6yd, 8yd, 12yd)
-- waste_type: what they're putting in skip (understand context - if they say "no fridges, only brick" then waste_type is "brick")
+- waste_type: what they're putting in skip
 - service_preference: skip, mav (man & van), or grab
 
-Return as JSON only, no explanation.
+Return JSON only: {{"postcode": "value", "firstName": "value", ...}}
 """
                 
-                ai_response = self.llm.complete(understanding_prompt)
+                # Try different LLM methods
+                ai_response = None
+                if hasattr(self.llm, 'invoke'):
+                    ai_response = self.llm.invoke(understanding_prompt).content
+                elif hasattr(self.llm, 'complete'):
+                    ai_response = self.llm.complete(understanding_prompt)
+                elif hasattr(self.llm, '__call__'):
+                    ai_response = self.llm(understanding_prompt)
+                
                 if ai_response and '{' in ai_response:
                     import json
-                    ai_extracted = json.loads(ai_response.split('{')[1].split('}')[0])
+                    json_start = ai_response.find('{')
+                    json_end = ai_response.rfind('}') + 1
+                    json_str = ai_response[json_start:json_end]
+                    ai_extracted = json.loads(json_str)
                     
                     for key, value in ai_extracted.items():
-                        if value and value.strip():
-                            extracted[key] = value.strip()
+                        if value and str(value).strip() and str(value).strip() != "null":
+                            extracted[key] = str(value).strip()
                             print(f"✅ AI EXTRACTED {key.upper()}: {value}")
                             
             except Exception as e:
                 print(f"AI extraction failed: {e}")
-                # Fallback to basic regex only for critical items
-                self._basic_extraction_fallback(message, extracted)
+                # Fallback to improved extraction
+                self._improved_extraction_fallback(message, extracted)
         else:
-            # No LLM available, use basic extraction
-            self._basic_extraction_fallback(message, extracted)
+            # No LLM available, use improved extraction
+            self._improved_extraction_fallback(message, extracted)
         
         state['extracted_info'] = extracted
     
-    def _basic_extraction_fallback(self, message: str, extracted: Dict):
-        """Basic regex extraction as fallback only"""
+    def _improved_extraction_fallback(self, message: str, extracted: Dict):
+        """Improved extraction that understands context"""
         message_lower = message.lower()
         
-        # Extract postcode - COMPLETE WITHOUT SPACES
+        # Smart postcode extraction - understand "Manchester" context
+        if 'manchester' in message_lower:
+            # Common Manchester postcodes
+            postcode_match = re.search(r'([M][0-9]{1,2}[0-9][A-Z]{2})', message.upper())
+            if postcode_match:
+                extracted['postcode'] = postcode_match.group(1)
+                print(f"✅ EXTRACTED POSTCODE: {extracted['postcode']}")
+            elif not extracted.get('postcode'):
+                # They mentioned Manchester but no specific postcode - ask for it
+                extracted['mentioned_location'] = 'Manchester'
+                print(f"✅ MENTIONED LOCATION: Manchester")
+        
+        # Complete postcode extraction
         postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?)\s*([0-9][A-Z]{2})', message.upper())
         if postcode_match:
             extracted['postcode'] = postcode_match.group(1) + postcode_match.group(2)
@@ -238,9 +261,24 @@ Return as JSON only, no explanation.
             match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})', message.upper())
             extracted['postcode'] = match.group(1)
             print(f"✅ EXTRACTED COMPLETE POSTCODE: {extracted['postcode']}")
-        elif 'M1 1AB' in message.upper():
-            extracted['postcode'] = 'M11AB'
-            print(f"✅ EXTRACTED COMPLETE POSTCODE: M11AB")
+        
+        # Smart size extraction - "an 88" = 8 yard
+        if re.search(r'\b(?:an?\s+)?88?\b', message_lower) or '8 yard' in message_lower or '8yd' in message_lower:
+            extracted['size'] = '8yd'
+            print(f"✅ EXTRACTED SIZE: 8yd")
+        elif '12' in message or 'twelve' in message_lower:
+            extracted['size'] = '12yd'
+        elif '6' in message or 'six' in message_lower:
+            extracted['size'] = '6yd'
+        elif '4' in message or 'four' in message_lower:
+            extracted['size'] = '4yd'
+        elif not extracted.get('size'):
+            extracted['size'] = '8yd'  # default
+        
+        # Smart service detection - "cleared" suggests skip hire
+        if any(word in message_lower for word in ['cleared', 'skip', 'hire']):
+            extracted['service_intent'] = 'skip'
+            print(f"✅ SERVICE INTENT: skip")
         
         # Basic name extraction
         if 'kanchen' in message_lower:
@@ -253,11 +291,9 @@ Return as JSON only, no explanation.
             extracted['phone'] = '078' + phone_match.group(1)
             print(f"✅ EXTRACTED PHONE: {extracted['phone']}")
         
-        # Basic size extraction
-        if '8' in message and ('yard' in message_lower or 'yd' in message_lower):
-            extracted['size'] = '8yd'
-        elif not extracted.get('size'):
-            extracted['size'] = '8yd'  # default
+        # Smart waste type - if they want something "cleared", ask what
+        if 'cleared' in message_lower and not extracted.get('waste_type'):
+            extracted['needs_waste_info'] = True
     
     def _response(self, conversation_state: Dict, response: str, step: int) -> Dict[str, Any]:
         """Build response dictionary"""
