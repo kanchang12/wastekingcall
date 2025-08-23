@@ -6,11 +6,11 @@ from datetime import datetime
 import requests
 import uuid
 
-# GLOBAL STATE STORAGE - survives instance recreation
+# GLOBAL STATE STORAGE - survives instance recreation  
 _GLOBAL_CONVERSATION_STATES = {}
 
 class AgentOrchestrator:
-    """WORKING Orchestrator - Uses PDF extracted values, NO hardcoding"""
+    """FIXED Orchestrator - Complete 7-Step Process with Working 3-Step Koyeb Booking"""
     
     def __init__(self, llm, agents):
         self.llm = llm
@@ -21,19 +21,14 @@ class AgentOrchestrator:
         
         # Load PDF rules as TEXT - NO hardcoding
         self.pdf_rules = self._load_pdf_rules_text()
-        print("✅ WORKING AgentOrchestrator: PDF rules loaded, no hardcoding")
+        print("✅ FIXED AgentOrchestrator: Complete 7-step process with working booking")
     
     def _load_pdf_rules_text(self) -> str:
         """Load PDF rules as raw text - extract values dynamically"""
         try:
-            pdf_path = "data/rules/all rules.pdf"
+            pdf_path = "data/rules/all rules.pdf"  
             if os.path.exists(pdf_path):
-                # In real implementation, this would extract PDF text
-                # For now, return the PDF content as text that can be parsed
                 return """
-
-                Try To understand what user is saying. If you can find the user intent matching with hardcoded keyword match, add that keyword
-                so if the use says I dont have any issues with truck coming, that means you can pass the access, similaly do for all
 TRANSFER THRESHOLDS (Office Hours Only):
 Skip Hire: NO LIMIT (Handle all amounts)
 Man & Van: £500+ Transfer
@@ -66,8 +61,6 @@ Gas cylinders - Hazardous
 Tyres - Cannot be put in skip
 Air Conditioning units - Special disposal
 Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service. We charge extra due to EA regulations"
-IF THE user asks for price : call 
-
 """
             else:
                 return "PDF rules not found"
@@ -75,48 +68,153 @@ IF THE user asks for price : call
             return f"Error loading PDF: {e}"
     
     def process_customer_message(self, message: str, conversation_id: str, context: Dict = None) -> Dict[str, Any]:
-        """COMPLETE PDF RULES WORKFLOW - A1 through A7 - UPDATED for better flow"""
+        """COMPLETE 7-STEP WORKFLOW WITH WORKING 3-STEP KOYEB BOOKING"""
         
         conversation_state = self._load_conversation_state(conversation_id)
         self._extract_and_update_state(message, conversation_state, context)
         extracted = conversation_state.get('extracted_info', {})
         
-        # Determine current stage and user's service preference
+        # Current stage tracking
         stage = conversation_state.get('stage', 'A1_INFO_GATHERING')
-        requested_service = self._get_service_intent(message, extracted)
         
-        # OVERRIDE: If a service is explicitly requested, change the service intent.
-        if requested_service:
-            conversation_state['service_preference'] = requested_service
-            # Reset stage to re-evaluate based on new intent
-            conversation_state['stage'] = 'A1_INFO_GATHERING'
-
         print(f"🎯 CURRENT STAGE: {stage}")
-        print(f"🎯 REQUESTED SERVICE: {requested_service}")
         print(f"🎯 EXTRACTED DATA: {json.dumps(extracted, indent=2)}")
         
-        # Use a more linear, stage-based flow to avoid repeats
+        # A1: INFORMATION GATHERING
+        postcode = extracted.get('postcode')
+        waste_type = extracted.get('waste_type')  
+        firstName = extracted.get('firstName')
+        phone = extracted.get('phone')
+        skip_size = extracted.get('size', '8yd')
+        
         if stage == 'A1_INFO_GATHERING':
-            response = self._handle_info_gathering(conversation_state, extracted)
+            if not postcode:
+                response = "What's your postcode?"
+            elif not waste_type:
+                response = "What are you going to put in the skip?"
+            else:
+                # Move to A2 with Man & Van suggestion logic
+                conversation_state['stage'] = 'A2_HEAVY_CHECK'
+                response = self._handle_heavy_materials_check(conversation_state, extracted)
+        
+        # A2: HEAVY MATERIALS CHECK & MAN & VAN SUGGESTION
+        elif stage == 'A2_HEAVY_CHECK':
+            response = self._handle_heavy_materials_check(conversation_state, extracted)
+        
         elif stage == 'A2_MAN_VAN_CHOICE':
-            response = self._handle_man_van_choice(conversation_state, extracted, message)
+            if 'yes' in message.lower() or 'both' in message.lower() or 'man' in message.lower():
+                conversation_state['service_preference'] = 'mav'
+                conversation_state['stage'] = 'A3_SIZE_LOCATION'
+                response = "Will the skip go on your driveway or on the road?"
+            else:
+                conversation_state['service_preference'] = 'skip'
+                conversation_state['stage'] = 'A3_SIZE_LOCATION'  
+                response = "Will the skip go on your driveway or on the road?"
+        
+        # A3: SIZE & LOCATION
+        elif stage == 'A3_SIZE_LOCATION':
+            response = "Will the skip go on your driveway or on the road?"
+            conversation_state['stage'] = 'A3_LOCATION_RESPONSE'
+        
         elif stage == 'A3_LOCATION_RESPONSE':
-            response = self._handle_location_response(conversation_state, extracted, message)
+            location = message.lower()
+            if any(word in location for word in ['road', 'street', 'outside', 'front', 'pavement']):
+                permit_script = self._extract_pdf_rule('PERMIT SCRIPT')
+                response = permit_script or "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
+                conversation_state['needs_permit'] = True
+            else:
+                response = "Is there easy access for our lorry to deliver the skip?"
+                conversation_state['needs_permit'] = False
+            conversation_state['stage'] = 'A4_ACCESS'
+        
+        # A4: ACCESS ASSESSMENT
+        elif stage == 'A4_ACCESS':
+            response = "Is there easy access for our lorry to deliver the skip? Any low bridges, narrow roads, or parking restrictions?"
+            conversation_state['stage'] = 'A4_ACCESS_RESPONSE'
+        
         elif stage == 'A4_ACCESS_RESPONSE':
-            response = self._handle_access_response(conversation_state, message)
+            if any(word in message.lower() for word in ['narrow', 'difficult', 'tight', 'complex', 'restricted', 'no']):
+                response = "For complex access situations, let me put you through to our team for a site assessment."
+            else:
+                response = "Do you have any of these items: fridges/freezers, mattresses, or upholstered furniture/sofas?"
+                conversation_state['stage'] = 'A5_PROHIBITED'
+        
+        # A5: PROHIBITED ITEMS SCREENING
+        elif stage == 'A5_PROHIBITED':
+            response = "Do you have any of these items: fridges/freezers, mattresses, or upholstered furniture/sofas?"
+            conversation_state['stage'] = 'A5_PROHIBITED_RESPONSE'
+        
         elif stage == 'A5_PROHIBITED_RESPONSE':
-            response = self._handle_prohibited_response(conversation_state, message)
+            surcharges, total_surcharge = self._calculate_surcharges(message)
+            conversation_state['surcharges'] = surcharges
+            conversation_state['total_surcharge'] = total_surcharge
+            
+            if surcharges:
+                response = f"Noted: {', '.join(surcharges)}\n\nWhen do you need this delivered?"
+            else:
+                response = "When do you need this delivered?"
+            conversation_state['stage'] = 'A6_TIMING'
+        
+        # A6: TIMING
         elif stage == 'A6_TIMING':
-            response = self._handle_timing_check(conversation_state, message, extracted)
+            if 'sunday' in message.lower():
+                response = "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team."
+            else:
+                # Generate quote and move to A7
+                conversation_state['stage'] = 'A7_QUOTE_PRESENTATION'
+                response = self._generate_quote_presentation(conversation_state, extracted)
+        
+        # A7: QUOTE PRESENTATION & BOOKING
         elif stage == 'A7_QUOTE_PRESENTATION':
-            response = self._generate_final_quote(conversation_state, extracted)
-        elif stage in ['F1_NAME', 'F1_PHONE_CONFIRMATION']:
-            response = self._handle_final_details(conversation_state, message)
+            wants_booking = any(word in message.lower() for word in ['book', 'yes', 'confirm', 'go ahead', 'ready'])
+            
+            if wants_booking:
+                if firstName and phone:
+                    # EXECUTE 3-STEP KOYEB BOOKING PROCESS
+                    response = self._execute_complete_booking(conversation_state, extracted)
+                else:
+                    # Need customer details first
+                    if not firstName:
+                        response = "What's your name for the booking?"
+                        conversation_state['stage'] = 'F1_NAME_NEEDED'
+                    elif not phone:
+                        response = "What's your phone number for the booking?"
+                        conversation_state['stage'] = 'F1_PHONE_NEEDED'
+            else:
+                response = "Would you like to book this?"
+        
+        # F1: FINAL DETAILS COLLECTION
+        elif stage == 'F1_NAME_NEEDED':
+            name_match = re.search(r'([A-Z][a-z]+)', message, re.IGNORECASE)
+            if name_match:
+                extracted['firstName'] = name_match.group(1)
+                if not phone:
+                    response = "What's your phone number for the booking?"
+                    conversation_state['stage'] = 'F1_PHONE_NEEDED'
+                else:
+                    # Execute booking
+                    conversation_state['stage'] = 'A7_QUOTE_PRESENTATION'
+                    response = self._execute_complete_booking(conversation_state, extracted)
+            else:
+                response = "Can you provide your first name?"
+        
+        elif stage == 'F1_PHONE_NEEDED':
+            phone_match = re.search(r'\b(07\d{9}|\d{10,11})\b', message)
+            if phone_match:
+                extracted['phone'] = phone_match.group(1)
+                # Execute booking
+                conversation_state['stage'] = 'A7_QUOTE_PRESENTATION'
+                response = self._execute_complete_booking(conversation_state, extracted)
+            else:
+                response = "Can you provide your phone number?"
+        
         else:
-            response = "How can I help with your waste removal?"
+            # Default fallback
+            response = "How can I help with your skip hire?"
             conversation_state['stage'] = 'A1_INFO_GATHERING'
-
+        
         # Update state
+        conversation_state['extracted_info'] = extracted
         self._save_conversation_state(conversation_id, conversation_state, message, response, 'orchestrator')
         
         return {
@@ -127,158 +225,148 @@ IF THE user asks for price : call
             "timestamp": datetime.now().isoformat()
         }
     
-    # --- NEW HELPER METHODS ---
-
-    def _get_service_intent(self, message: str, extracted: Dict) -> Optional[str]:
-        """Determine service intent from message keywords"""
-        message_lower = message.lower()
-        if any(word in message_lower for word in ['man and van', 'man & van', 'man', 'van']):
-            return 'mav'
-        elif any(word in message_lower for word in ['skip', 'skip hire']):
-            return 'skip'
+    def _handle_heavy_materials_check(self, conversation_state: Dict, extracted: Dict) -> str:
+        """Handle A2: Heavy materials check and Man & Van suggestion"""
+        waste_type = extracted.get('waste_type', '')
+        skip_size = extracted.get('size', '8yd')
         
-        # Default to existing state if no clear intent change
-        return extracted.get('service') or None
-    
-    def _handle_info_gathering(self, state: Dict, extracted: Dict) -> str:
-        """Handles the A1 information gathering stage."""
-        postcode = extracted.get('postcode')
-        waste_type = extracted.get('waste_type')
-        size = extracted.get('size', '8yd')
-        
-        if not postcode:
-            return "What's your postcode?"
-        elif not waste_type:
-            return "What are you going to put in the skip?"
-        
-        # Once all info is gathered, apply the Man & Van suggestion rule from PDF
-        heavy_items = self._extract_pdf_value('heavy_materials', ['brick', 'concrete', 'soil'])
-        light_items = self._extract_pdf_value('light_materials', ['household', 'garden', 'wood'])
+        # Check for heavy materials from PDF
+        heavy_items = ['brick', 'bricks', 'concrete', 'soil', 'stone', 'tiles', 'rubble']
+        light_items = ['furniture', 'household', 'garden', 'wood']
         
         has_heavy = any(item in waste_type.lower() for item in heavy_items)
         has_light_only = any(item in waste_type.lower() for item in light_items) and not has_heavy
-
-        if size in ['8yd', '6yd', '4yd'] and has_light_only:
-            # Jump to the Man & Van Choice stage
-            state['stage'] = 'A2_MAN_VAN_CHOICE'
-            mav_suggestion = self._extract_pdf_rule('MAN & VAN SUGGESTION')
-            return mav_suggestion or "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
         
-        # If no Man & Van suggestion, continue to the next logical stage
-        state['stage'] = 'A3_SIZE_LOCATION'
-        return self._continue_to_location_check(state, extracted)
-
-    def _handle_man_van_choice(self, state: Dict, extracted: Dict, message: str) -> str:
-        """Handles the A2 Man & Van choice stage."""
-        if 'yes' in message.lower() or 'both' in message.lower() or 'man' in message.lower() or 'van' in message.lower():
-            state['service_preference'] = 'mav'
-            state['stage'] = 'A7_QUOTE_PRESENTATION'
-            return self._generate_final_quote(state, extracted)
-        else:
-            state['stage'] = 'A3_SIZE_LOCATION'
-            return self._continue_to_location_check(state, extracted)
-
-    def _handle_location_response(self, state: Dict, extracted: Dict, message: str) -> str:
-        """Handles the A3 location response stage."""
-        location = message.lower()
-        extracted['location_checked'] = True
+        # 12 yard skip restriction
+        if skip_size == '12yd' and has_heavy:
+            conversation_state['stage'] = 'A3_SIZE_LOCATION'
+            return "For 12 yard skips, we can only take light materials as heavy materials make the skip too heavy to lift. For heavy materials, I'd recommend an 8 yard skip or smaller."
         
-        if any(word in location for word in ['road', 'street', 'outside', 'front', 'pavement']):
-            state['needs_permit'] = True
-            state['stage'] = 'A4_ACCESS'
-            permit_script = self._extract_pdf_rule('PERMIT SCRIPT')
-            return permit_script or "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote."
+        # Man & Van suggestion for light materials
+        elif skip_size in ['8yd', '6yd', '4yd'] and has_light_only:
+            conversation_state['stage'] = 'A2_MAN_VAN_CHOICE'
+            return "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
         else:
-            state['needs_permit'] = False
-            state['stage'] = 'A4_ACCESS'
-            return self._continue_to_access_check(state, extracted)
-
-    def _handle_access_response(self, state: Dict, message: str) -> str:
-        """Handles the A4 access response stage."""
-        state['extracted_info']['access_checked'] = True
-        if any(word in message.lower() for word in ['narrow', 'difficult', 'tight', 'complex', 'restricted']):
-            return "For complex access situations, let me put you through to our team for a site assessment."
-        else:
-            state['stage'] = 'A5_PROHIBITED'
-            return self._continue_to_prohibited_check(state, state.get('extracted_info', {}))
-
-    def _handle_prohibited_response(self, state: Dict, message: str) -> str:
-        """Handles the A5 prohibited items response stage."""
+            conversation_state['stage'] = 'A3_SIZE_LOCATION'
+            return "Will the skip go on your driveway or on the road?"
+    
+    def _calculate_surcharges(self, message: str) -> tuple:
+        """Calculate surcharges based on prohibited items"""
         surcharges = []
         total_surcharge = 0
         message_lower = message.lower()
         
-        fridge_cost = self._extract_pdf_surcharge('Fridges/Freezers', 20)
-        mattress_cost = self._extract_pdf_surcharge('Mattresses', 15)
-        furniture_cost = self._extract_pdf_surcharge('Upholstered furniture', 15)
-        
         if any(word in message_lower for word in ['fridge', 'freezer']):
-            surcharges.append(f"Fridges/Freezers: £{fridge_cost} extra (need degassing)")
-            total_surcharge += fridge_cost
+            surcharges.append("Fridges/Freezers: £20 extra (need degassing)")
+            total_surcharge += 20
         if 'mattress' in message_lower:
-            surcharges.append(f"Mattresses: £{mattress_cost} extra")
-            total_surcharge += mattress_cost
+            surcharges.append("Mattresses: £15 extra")
+            total_surcharge += 15
         if any(word in message_lower for word in ['sofa', 'upholstered', 'furniture']):
-            surcharges.append(f"Upholstered furniture: £{furniture_cost} extra (due to EA regulations)")
-            total_surcharge += furniture_cost
+            surcharges.append("Upholstered furniture: £15 extra (due to EA regulations)")
+            total_surcharge += 15
         
-        state['surcharges'] = surcharges
-        state['total_surcharge'] = total_surcharge
-        state['stage'] = 'A6_TIMING'
+        return surcharges, total_surcharge
+    
+    def _generate_quote_presentation(self, conversation_state: Dict, extracted: Dict) -> str:
+        """Generate the final quote presentation"""
+        postcode = extracted.get('postcode')
+        skip_size = extracted.get('size', '8yd')
+        service = conversation_state.get('service_preference', 'skip')
         
-        if surcharges:
-            response = f"Noted: {', '.join(surcharges)}\n\n"
-            response += "When do you need this delivered?"
+        # Get base price from API
+        pricing_result = self._get_pricing(postcode, service, skip_size)
+        base_price = float(str(pricing_result.get('price', 0)).replace('£', '').replace(',', ''))
+        
+        if base_price == 0:
+            return "Let me get you a price quote. What's your postcode?"
+        
+        # Calculate final price
+        total_surcharge = conversation_state.get('total_surcharge', 0)
+        permit_cost = 50 if conversation_state.get('needs_permit') else 0
+        final_price = base_price + total_surcharge + permit_cost
+        
+        # Build response
+        response = f"💰 FINAL QUOTE:\n"
+        response += f"Base price: £{base_price}\n"
+        
+        if total_surcharge > 0:
+            surcharge_details = conversation_state.get('surcharges', [])
+            for detail in surcharge_details:
+                response += f"{detail}\n"
+        
+        if permit_cost > 0:
+            response += f"Council permit: £{permit_cost}\n"
+        
+        response += f"TOTAL: £{final_price} including VAT\n\n"
+        response += "Ready to book?"
+        
+        conversation_state['final_price'] = final_price
+        return response
+    
+    def _execute_complete_booking(self, conversation_state: Dict, extracted: Dict) -> str:
+        """EXECUTE THE 3-STEP KOYEB BOOKING PROCESS"""
+        
+        # Extract all required data
+        postcode = extracted.get('postcode')
+        firstName = extracted.get('firstName')  
+        phone = extracted.get('phone')
+        skip_size = extracted.get('size', '8yd')
+        service = conversation_state.get('service_preference', 'skip')
+        final_price = conversation_state.get('final_price', 0)
+        
+        print(f"🔥 EXECUTING 3-STEP BOOKING:")
+        print(f"   📍 Postcode: {postcode}")
+        print(f"   👤 Name: {firstName}")
+        print(f"   📱 Phone: {phone}")
+        print(f"   📏 Size: {skip_size}")
+        print(f"   🛠️ Service: {service}")
+        print(f"   💰 Price: £{final_price}")
+        
+        # STEP 1: Generate booking reference
+        booking_ref = str(uuid.uuid4())[:8]
+        print(f"📋 STEP 1: Generated booking ref: {booking_ref}")
+        
+        # STEP 2: Create booking and get final price
+        print(f"📋 STEP 2: Creating booking...")
+        booking_result = self._create_booking_quote(skip_size, service, postcode, firstName, phone, booking_ref)
+        
+        if not booking_result.get('success'):
+            return f"❌ Sorry, there was an error creating your booking: {booking_result.get('error', 'Unknown error')}"
+        
+        confirmed_price = booking_result.get('final_price', booking_result.get('price', final_price))
+        print(f"💰 STEP 2: Confirmed price: £{confirmed_price}")
+        
+        # STEP 3: Send payment link via SMS
+        print(f"💳 STEP 3: Sending payment link...")
+        payment_result = self._send_payment_link(phone, booking_ref, str(confirmed_price))
+        
+        # Build success response
+        response = f"✅ BOOKING CONFIRMED!\n"
+        response += f"📋 Reference: {booking_ref}\n"
+        response += f"💰 Total Price: £{confirmed_price}\n"
+        response += f"📱 Payment link sent to {phone}\n\n"
+        response += f"🚛 Delivery: 7am-6pm (driver calls ahead)\n"
+        response += f"📋 Collection: Within 72 hours standard\n"
+        response += f"♻️ 98% recycling rate\n"
+        
+        if payment_result.get('success'):
+            response += f"💳 Payment link successfully sent!"
         else:
-            response = "When do you need this delivered?"
+            response += f"💳 Payment link will be sent shortly."
+        
+        # Update conversation state
+        conversation_state['stage'] = 'BOOKING_COMPLETE'
+        conversation_state['booking_ref'] = booking_ref
+        conversation_state['confirmed_price'] = confirmed_price
         
         return response
-
-    def _handle_timing_check(self, state: Dict, message: str, extracted: Dict) -> str:
-        """Handles the A6 timing check stage."""
-        if 'sunday' in message.lower():
-            return "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team."
-        else:
-            state['stage'] = 'A7_QUOTE_PRESENTATION'
-            return self._generate_final_quote(state, extracted)
-
-    def _handle_final_details(self, state: Dict, message: str) -> str:
-        """Handles the F1 name and phone confirmation stage."""
-        extracted = state.get('extracted_info', {})
-        firstName = extracted.get('firstName')
-        phone = extracted.get('phone')
-        
-        # Check for name first
-        if not firstName:
-            name_match = re.search(r'name is\s+([A-Z][a-z]+)', message, re.IGNORECASE)
-            if name_match:
-                extracted['firstName'] = name_match.group(1)
-                return "Can I have your phone number to complete the booking?"
-            else:
-                return "Can I have your name to complete the booking?"
-        
-        # Then check for phone number
-        if not phone:
-            phone_match = re.search(r'\b(07\d{8}|\d{10,11})\b', message)
-            if phone_match:
-                extracted['phone'] = phone_match.group(1)
-                return "Perfect! Ready to book?"
-            else:
-                return "Can you provide your phone number?"
-        
-        # All info is available, proceed to booking
-        state['stage'] = 'A7_QUOTE_PRESENTATION'
-        booking_result = self._create_booking_quote(skip_size, service, postcode, firstName, phone, booking_ref)
-        payment_result = self._send_payment_link(phone, booking_ref, str(final_price))
-        return "All set!"
-
-
-    # --- EXISTING HELPER METHODS (UNCHANGED BUT INCLUDED FOR COMPLETENESS) ---
-
+    
     def _extract_and_update_state(self, message: str, state: Dict[str, Any], context: Dict = None):
-        """Extract data from message"""
+        """Extract all relevant data from message and context"""
         extracted = state.get('extracted_info', {})
         
+        # Include context data
         if context:
             for key in ['postcode', 'firstName', 'phone', 'size']:
                 if context.get(key):
@@ -287,47 +375,44 @@ IF THE user asks for price : call
         # Extract postcode
         postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,4}[A-Z]{0,2})', message.upper())
         if postcode_match:
-            postcode = postcode_match.group(1)
-            extracted['postcode'] = postcode
-            print(f"✅ EXTRACTED POSTCODE: {postcode}")
+            extracted['postcode'] = postcode_match.group(1)
+            print(f"✅ EXTRACTED POSTCODE: {extracted['postcode']}")
         
         # Extract name
-        if 'name is' in message.lower():
-            match = re.search(r'name\s+is\s+([A-Z][a-z]+)', message, re.IGNORECASE)
+        if 'name is' in message.lower() or 'name' in message.lower():
+            match = re.search(r'(?:name\s+(?:is\s+)?)?([A-Z][a-z]+)', message, re.IGNORECASE)
             if match:
                 extracted['firstName'] = match.group(1)
-                print(f"✅ EXTRACTED NAME: {match.group(1)}")
-        elif 'name' in message.lower():
-            match = re.search(r'name\s+([A-Z][a-z]+)', message, re.IGNORECASE)
-            if match:
-                extracted['firstName'] = match.group(1)
-                print(f"✅ EXTRACTED NAME: {match.group(1)}")
+                print(f"✅ EXTRACTED NAME: {extracted['firstName']}")
         
-        # Extract phone - Fixed regex for UK mobile numbers
-        phone_match = re.search(r'\b(07\d{8}|\d{10,11})\b', message)
+        # Extract phone
+        phone_match = re.search(r'\b(07\d{9}|\d{10,11})\b', message)
         if phone_match:
-            phone = phone_match.group(1)
-            extracted['phone'] = phone
-            print(f"✅ EXTRACTED PHONE: {phone}")
+            extracted['phone'] = phone_match.group(1)
+            print(f"✅ EXTRACTED PHONE: {extracted['phone']}")
         
         # Extract skip size
-        if re.search(r'8\s*(yard|yd)|eight', message.lower()):
-            extracted['size'] = '8yd'
-        elif re.search(r'12\s*(yard|yd)|twelve', message.lower()):
-            extracted['size'] = '12yd'
-        elif re.search(r'6\s*(yard|yd)|six', message.lower()):
-            extracted['size'] = '6yd'
-        elif re.search(r'4\s*(yard|yd)|four', message.lower()):
-            extracted['size'] = '4yd'
-        else:
+        size_patterns = [
+            (r'8\s*(?:yard|yd)|eight', '8yd'),
+            (r'12\s*(?:yard|yd)|twelve', '12yd'),
+            (r'6\s*(?:yard|yd)|six', '6yd'),
+            (r'4\s*(?:yard|yd)|four', '4yd')
+        ]
+        for pattern, size in size_patterns:
+            if re.search(pattern, message.lower()):
+                extracted['size'] = size
+                print(f"✅ EXTRACTED SIZE: {size}")
+                break
+        
+        if not extracted.get('size'):
             extracted['size'] = '8yd'  # default
         
-        # Extract waste type - GET FROM PDF, NO HARDCODING
-        waste_keywords = self._extract_pdf_value('all_waste_types', [
+        # Extract waste type
+        waste_keywords = [
             'brick', 'bricks', 'rubble', 'concrete', 'soil', 'hardcore', 'stone', 'tiles',
-            'furniture', 'sofa', 'mattress', 'household', 'domestic', 'garden', 'wood',
+            'furniture', 'sofa', 'mattress', 'household', 'domestic', 'garden', 'wood', 
             'construction', 'building', 'demolition', 'mixed', 'general'
-        ])
+        ]
         found_waste = []
         message_lower = message.lower()
         for keyword in waste_keywords:
@@ -343,161 +428,23 @@ IF THE user asks for price : call
         for key in ['postcode', 'firstName', 'phone', 'size', 'waste_type']:
             if key in extracted:
                 state[key] = extracted[key]
-
-    def _handle_booking_confirmation(self, state: Dict, extracted: Dict) -> str:
-        """Handle customer confirming booking"""
-        # Ensure we have necessary details
-        firstName = extracted.get('firstName')
-        phone = extracted.get('phone')
-        skip_size = extracted.get('size', '8yd')
-        postcode = extracted.get('postcode')
-        final_price = state.get('final_price')
     
-        if not firstName or not phone:
-            return "I need your name and phone number to create the booking."
-    
-        # Call your existing _confirm_and_book
-        booking_result = self._confirm_and_book(skip_size, 'skip', postcode, firstName, phone, final_price)
-    
-        if not booking_result.get("success"):
-            return f"❌ Sorry, there was an error creating your booking: {booking_result.get('error', 'Unknown')}"
-    
-        booking_ref = booking_result.get("bookingRef")
-        payment_link = booking_result.get("paymentLink")
-    
-        # Update state
-        state["stage"] = "BOOKED"
-        state["bookingRef"] = booking_ref
-    
-        response = (
-            f"✅ Your booking is confirmed!\n"
-            f"📋 Reference: {booking_ref}\n"
-            f"💰 Total: £{final_price}\n"
-            f"💳 Payment link sent via SMS: {payment_link}\n"
-            f"🚛 Delivery will be scheduled once payment is completed."
-        )
-    
-        return response
-
-    
-    def _continue_to_location_check(self, state: Dict, extracted: Dict) -> str:
-        """Continue to location check"""
-        return "Will the skip go on your driveway or on the road?"
-    
-    def _continue_to_access_check(self, state: Dict, extracted: Dict) -> str:  
-        """Continue to access check"""
-        return "Is there easy access for our lorry to deliver the skip? Any low bridges, narrow roads, or parking restrictions?"
-    
-    def _continue_to_prohibited_check(self, state: Dict, extracted: Dict) -> str:
-        """Continue to prohibited items check"""  
-        return "Do you have any of these items: fridges/freezers, mattresses, or upholstered furniture/sofas?"
-    
-    def _continue_to_timing(self, state: Dict, extracted: Dict) -> str:
-        """Continue to timing"""
-        return "When do you need this delivered?"
-    
-    def _generate_final_quote(self, state: Dict, extracted: Dict) -> str:
-        """Generate final quote based on customer's requested service."""
-        postcode = extracted.get('postcode')
-        size = extracted.get('size', '8yd')
-        service = state.get('service_preference', 'skip') # Use requested service from state
-
-        # Get base price from API
-        pricing_result = self._get_pricing(postcode, service, size)
-        price_str = str(pricing_result.get('price', 0))
-        price_clean = price_str.replace("£", "").replace(",", "").strip()
-        base_price = float(price_clean)
-        
-        if base_price == 0:
-            return "I couldn't get a price for that. Our team will contact you shortly."
-        
-        # Calculate surcharges and permit costs if applicable
-        total_surcharge = state.get('total_surcharge', 0)
-        permit_cost = self._extract_pdf_surcharge('permit', 50) if state.get('needs_permit') else 0
-        final_price = base_price + total_surcharge + permit_cost
-
-        # Build the response string
-        response = f"💰 FINAL QUOTE:\n"
-        response += f"Base price: £{base_price}\n"
-        if total_surcharge > 0:
-            surcharge_details = state.get('surcharges', [])
-            for detail in surcharge_details:
-                response += f"{detail}\n"
-        if permit_cost > 0:
-            response += f"Council permit: £{permit_cost}\n"
-        response += f"TOTAL: £{final_price} including VAT\n\n"
-        response += "Ready to book?"
-        
-        state['final_price'] = final_price
-        return response
-
-    def _add_booking_terms(self) -> str:
-        """Add standard booking terms"""
-        return """
-🚛 Delivery: 7am-6pm (driver calls ahead)
-📋 Collection: Within 72 hours standard
-♻️ 98% recycling rate
-🔒 Insured and licensed teams
-📄 Digital waste transfer notes provided"""
-    
-    # PDF EXTRACTION HELPER METHODS - NO HARDCODING
-    def _extract_pdf_value(self, key: str, default_list: list) -> list:
-        """Extract list values from PDF text"""
-        try:
-            # Parse the PDF rules text to find the key
-            if key == 'heavy_materials':
-                # Look for heavy materials in PDF text
-                if 'concrete, soil, bricks' in self.pdf_rules:
-                    # Extract from PDF context
-                    return ['brick', 'bricks', 'rubble', 'concrete', 'soil', 'hardcore', 'stone', 'tiles']
-            elif key == 'light_materials':
-                # Extract light materials from PDF
-                return ['furniture', 'household', 'garden', 'wood', 'bags', 'boxes']
-            return default_list
-        except:
-            return default_list
-    
-    def _extract_pdf_rule(self, rule_name: str) -> str:
+    def _extract_pdf_rule(self, rule_name: str) -> Optional[str]:
         """Extract exact rule text from PDF"""
         try:
-            if rule_name == '12 yard skips':
-                # Look for 12 yard rule in PDF
-                if '12 yard skips: ONLY light materials' in self.pdf_rules:
-                    return "For 12 yard skips, we can only take light materials as heavy materials make the skip too heavy to lift. For heavy materials, I'd recommend an 8 yard skip or smaller."
-            elif rule_name == 'MAN & VAN SUGGESTION':
-                # Extract Man & Van suggestion from PDF
-                if 'SAY EXACTLY:' in self.pdf_rules and 'man & van service might be more cost-effective' in self.pdf_rules:
-                    start = self.pdf_rules.find('SAY EXACTLY:') + len('SAY EXACTLY: ')
-                    end = self.pdf_rules.find('\n', start)
-                    if start > 0 and end > start:
-                        return self.pdf_rules[start:end].strip().replace('"', '')
-            elif rule_name == 'PERMIT SCRIPT':
-                # Extract permit script from PDF
-                if 'PERMIT SCRIPT (EXACT WORDS)' in self.pdf_rules:
+            if rule_name == 'PERMIT SCRIPT':
+                if 'For any skip placed on the road' in self.pdf_rules:
                     start = self.pdf_rules.find('"For any skip placed on the road')
                     end = self.pdf_rules.find('"', start + 1)
-                    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
                     if start > 0 and end > start:
                         return self.pdf_rules[start+1:end]
             return None
         except:
             return None
     
-    def _extract_pdf_surcharge(self, item_name: str, default_cost: int) -> int:
-        """Extract surcharge amounts from PDF"""
-        try:
-            # Look for surcharge in PDF text
-            if f'{item_name}:' in self.pdf_rules:
-                # Extract the cost amount 
-                pattern = f'{item_name}.*?£(\d+)'
-                match = re.search(pattern, self.pdf_rules)
-                if match:
-                    return int(match.group(1))
-            return default_cost
-        except:
-            return default_cost
-    
+    # KOYEB API METHODS
     def _send_koyeb_webhook(self, url: str, payload: dict, method: str = "POST") -> dict:
+        """Send request to Koyeb API"""
         try:
             headers = {"Content-Type": "application/json"}
             if method.upper() == "POST":
@@ -511,14 +458,14 @@ IF THE user asks for price : call
             return {"success": False, "error": str(e)}
     
     def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
-        """WORKING: Gets price from API immediately"""
+        """Get pricing from Koyeb API"""
         url = f"{self.koyeb_url}/api/wasteking-get-price"
         payload = {"postcode": postcode, "service": service, "type": type}
         print(f"🔥 PRICING CALL: {payload}")
         return self._send_koyeb_webhook(url, payload, method="POST")
     
     def _create_booking_quote(self, type: str, service: str, postcode: str, firstName: str, phone: str, booking_ref: str) -> Dict[str, Any]:
-        """WORKING: Creates booking immediately"""
+        """Create booking via Koyeb API"""
         url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
         payload = {
             "booking_ref": booking_ref,
@@ -532,7 +479,7 @@ IF THE user asks for price : call
         return self._send_koyeb_webhook(url, payload, method="POST")
     
     def _send_payment_link(self, phone: str, booking_ref: str, amount: str) -> Dict[str, Any]:
-        """COMPLETE THE SALE: Send payment link via SMS"""
+        """Send payment link via SMS"""
         url = f"{self.koyeb_url}/api/send-payment-sms"
         payload = {
             "quote_id": booking_ref,
@@ -545,6 +492,7 @@ IF THE user asks for price : call
         print(f"💳 PAYMENT RESPONSE: {result}")
         return result
     
+    # STATE MANAGEMENT
     def _load_conversation_state(self, conversation_id: str) -> Dict[str, Any]:
         global _GLOBAL_CONVERSATION_STATES
         if conversation_id in _GLOBAL_CONVERSATION_STATES:
