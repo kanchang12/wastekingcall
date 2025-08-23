@@ -18,35 +18,28 @@ class SkipHireAgent:
         self.llm = llm
         self.tools = tools
         self.pdf_rules = self._load_pdf_rules_with_cache()
-
-        # Prompt: instruct agent to follow rules dynamically
+        
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""You are Skip Hire agent. Follow the customer interaction flow
-defined in the PDF rules below. Do not hardcode steps – always follow the PDF.
+            ("system", """You are Skip Hire agent. Follow 9-step sequence:
+1. name 2. postcode 3. product 4. waste type 5. quantity 6. product specific 7. price 8. date 9. booking
 
-PDF RULES:
-{self.pdf_rules}
-
-⚠️ Instructions:
-- Ask questions in the sequence defined in PDF.
-- Collect required info step by step.
-- Call tools when reaching pricing or booking stages.
-- If customer request belongs to another service (grab, man & van), 
-  transfer back to orchestrator:
-  TRANSFER_TO_ORCHESTRATOR:{{collected_data}}
-"""),
+Ask questions in sequence. Save state. Use tools for pricing and booking.
+If customer needs different service, transfer back to orchestrator with: TRANSFER_TO_ORCHESTRATOR:{collected_data}"""),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
         ])
         
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
-
+        
+        print("✅ SKIP HIRE AGENT initialized")
+    
     def _load_pdf_rules_with_cache(self) -> str:
-        """Load PDF rules once, cache globally"""
         global _PDF_RULES_CACHE
+        
         if _PDF_RULES_CACHE is not None:
             return _PDF_RULES_CACHE
+        
         try:
             pdf_path = os.path.join('data', 'rules', 'all rules.pdf')
             if os.path.exists(pdf_path):
@@ -56,6 +49,7 @@ PDF RULES:
                     for page in pdf_reader.pages:
                         text += page.extract_text() + "\n"
                 _PDF_RULES_CACHE = text
+                print("✅ SKIP AGENT: PDF rules cached")
                 return text
             else:
                 _PDF_RULES_CACHE = "PDF rules not found"
@@ -63,154 +57,226 @@ PDF RULES:
         except Exception as e:
             _PDF_RULES_CACHE = f"Error loading PDF: {str(e)}"
             return _PDF_RULES_CACHE
-
+    
     def _load_state(self, conversation_id: str) -> Dict[str, Any]:
-        """Load saved state"""
         global _AGENT_STATES
-        return _AGENT_STATES.get(conversation_id, {})
-
+        state = _AGENT_STATES.get(conversation_id, {})
+        print(f"📂 SKIP AGENT: Loaded state for {conversation_id}: {json.dumps(state, indent=2)}")
+        return state
+    
     def _save_state(self, conversation_id: str, data: Dict[str, Any]):
-        """Save extracted state"""
         global _AGENT_STATES
         _AGENT_STATES[conversation_id] = data
-
+        print(f"💾 SKIP AGENT: Saved state for {conversation_id}: {json.dumps(data, indent=2)}")
+    
     def process_message(self, message: str, context: Dict = None) -> str:
+        print(f"\n🔧 SKIP AGENT RECEIVED: '{message}'")
+        print(f"📋 SKIP AGENT CONTEXT: {json.dumps(context, indent=2) if context else 'None'}")
+        
         conversation_id = context.get('conversation_id') if context else 'default'
         
-        # Load state
+        # Load previous state
         previous_state = self._load_state(conversation_id)
         
-        # Extract info
+        # Extract new data and merge with previous state
         extracted_data = self._extract_data(message, context)
         combined_data = {**previous_state, **extracted_data}
-
-        # Transfer check
+        
+        print(f"🔄 SKIP AGENT: Combined data: {json.dumps(combined_data, indent=2)}")
+        
+        # Check if transfer needed using PDF rules
         transfer_check = self._check_transfer_needed_with_rules(message, combined_data)
         if transfer_check:
             self._save_state(conversation_id, combined_data)
+            print(f"🔄 SKIP AGENT: TRANSFERRING to orchestrator")
             return f"TRANSFER_TO_ORCHESTRATOR:{json.dumps(combined_data)}"
-
-        # Determine next step based on PDF flow
-        current_step = self._determine_step_from_rules(combined_data)
-
-        if current_step == "pricing":
+        
+        current_step = self._determine_step(combined_data)
+        print(f"👣 SKIP AGENT: Current step: {current_step}")
+        
+        response = ""
+        
+        if current_step == 'name' and not combined_data.get('firstName'):
+            response = "What's your name?"
+        elif current_step == 'postcode' and not combined_data.get('postcode'):
+            response = "What's your postcode?"
+        elif current_step == 'product' and not combined_data.get('product'):
+            response = "What size skip do you need?"
+        elif current_step == 'waste_type' and not combined_data.get('waste_type'):
+            response = "What type of waste?"
+        elif current_step == 'quantity' and not combined_data.get('quantity'):
+            response = "How much waste do you have?"
+        elif current_step == 'product_specific' and not combined_data.get('product_specific'):
+            response = "Any specific requirements?"
+        elif current_step == 'price':
             combined_data['has_pricing'] = True
             response = self._get_pricing(combined_data)
-        elif current_step == "booking":
+        elif current_step == 'date' and not combined_data.get('preferred_date'):
+            response = "When would you like delivery?"
+        elif current_step == 'booking':
             response = self._create_booking(combined_data)
         else:
-            # Ask the question that PDF rules say should be next
-            response = self._get_question_for_step(current_step)
-
+            response = "What's your name?"
+        
         # Save updated state
         self._save_state(conversation_id, combined_data)
+        
+        print(f"✅ SKIP AGENT RESPONSE: {response}")
         return response
-
+    
     def _check_transfer_needed_with_rules(self, message: str, data: Dict[str, Any]) -> bool:
-        """Check if customer should be transferred using PDF rules"""
-        msg = message.lower()
-        rules_lower = self.pdf_rules.lower()
-        if "grab" in msg or "grab hire" in msg:
+        message_lower = message.lower()
+        
+        # Check if message contains items that should go to other services based on PDF rules
+        if any(word in message_lower for word in ['grab', 'grab hire']):
+            print("🔄 SKIP AGENT: Transfer needed - grab hire mentioned")
             return True
-        if "man and van" in msg or "mav" in msg or "furniture" in msg:
+        if any(word in message_lower for word in ['man and van', 'mav', 'furniture']):
+            print("🔄 SKIP AGENT: Transfer needed - man & van mentioned")
             return True
-        # TODO: could parse PDF rules to identify other transfer keywords
+            
         return False
-
+    
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
         data = context.copy() if context else {}
-
-        # Normalize postcode → m11ab format
-        postcode_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b', message.upper())
+        
+        postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})', message.upper().replace(' ', ''))
         if postcode_match:
-            normalized = postcode_match.group(1).replace(" ", "").lower()
-            data['postcode'] = normalized
-
-        # Name
+            data['postcode'] = postcode_match.group(1)
+            print(f"✅ SKIP AGENT: Extracted postcode: {data['postcode']}")
+        
         name_match = re.search(r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', message, re.IGNORECASE)
         if name_match:
             data['firstName'] = name_match.group(1).strip().title()
-
-        # Phone
+            print(f"✅ SKIP AGENT: Extracted name: {data['firstName']}")
+        
         phone_match = re.search(r'\b(07\d{9}|\d{11})\b', message)
         if phone_match:
             data['phone'] = phone_match.group(1)
-
-        # Product detection
-        if not data.get('product') and any(size in message.lower() for size in ['4yd', '6yd', '8yd', '12yd']):
+            print(f"✅ SKIP AGENT: Extracted phone: {data['phone']}")
+            
+        # Extract other fields based on current message
+        if any(word in message.lower() for word in ['4yd', '6yd', '8yd', '12yd']):
             for size in ['4yd', '6yd', '8yd', '12yd']:
                 if size in message.lower():
                     data['product'] = size
+                    print(f"✅ SKIP AGENT: Extracted product: {data['product']}")
                     break
-
-        # Waste type, quantity, date, etc. (simple keyword match)
-        if not data.get('waste_type') and any(w in message.lower() for w in ['waste', 'rubbish', 'materials']):
+        
+        # Extract waste type, quantity, etc. from message
+        if not data.get('waste_type') and any(word in message.lower() for word in ['waste', 'rubbish', 'materials']):
             data['waste_type'] = message.strip()
-
-        if not data.get('quantity') and any(w in message.lower() for w in ['full', 'half', 'bags', 'tonnes']):
+            print(f"✅ SKIP AGENT: Extracted waste_type: {data['waste_type']}")
+            
+        if not data.get('quantity') and any(word in message.lower() for word in ['full', 'half', 'bags', 'tonnes']):
             data['quantity'] = message.strip()
-
-        if not data.get('preferred_date') and any(w in message.lower() for w in ['tomorrow', 'today', 'monday', 'tuesday', 'week']):
+            print(f"✅ SKIP AGENT: Extracted quantity: {data['quantity']}")
+            
+        if not data.get('preferred_date') and any(word in message.lower() for word in ['tomorrow', 'today', 'monday', 'tuesday', 'week']):
             data['preferred_date'] = message.strip()
-
+            print(f"✅ SKIP AGENT: Extracted preferred_date: {data['preferred_date']}")
+            
         return data
-
-    def _determine_step_from_rules(self, data: Dict[str, Any]) -> str:
-        """
-        Decide the next step based on rules from PDF instead of hardcoding.
-        For simplicity, this assumes the PDF lists steps in order like:
-        name → postcode → product → waste → quantity → specifics → pricing → date → booking
-        """
-        # These would be parsed dynamically from PDF if structured
-        if not data.get('firstName'): return "name"
-        if not data.get('postcode'): return "postcode"
-        if not data.get('product'): return "product"
-        if not data.get('waste_type'): return "waste_type"
-        if not data.get('quantity'): return "quantity"
-        if not data.get('product_specific'): return "product_specific"
-        if not data.get('has_pricing'): return "pricing"
-        if not data.get('preferred_date'): return "date"
-        return "booking"
-
-    def _get_question_for_step(self, step: str) -> str:
-        """
-        Ask the appropriate question for this step using PDF rules.
-        In production, parse the actual text of PDF to generate these.
-        """
-        mapping = {
-            "name": "What's your name?",
-            "postcode": "What's your postcode?",
-            "product": "What size skip do you need?",
-            "waste_type": "What type of waste?",
-            "quantity": "How much waste do you have?",
-            "product_specific": "Any specific requirements?",
-            "date": "When would you like delivery?",
-        }
-        return mapping.get(step, "Can you provide more details?")
-
+    
+    def _determine_step(self, data: Dict[str, Any]) -> str:
+        if not data.get('firstName'): return 'name'
+        if not data.get('postcode'): return 'postcode'  
+        if not data.get('product'): return 'product'
+        if not data.get('waste_type'): return 'waste_type'
+        if not data.get('quantity'): return 'quantity'
+        if not data.get('product_specific'): return 'product_specific'
+        if not data.get('has_pricing'): return 'price'
+        if not data.get('preferred_date'): return 'date'
+        return 'booking'
+    
     def _get_pricing(self, data: Dict[str, Any]) -> str:
+        print(f"💰 SKIP AGENT: CALLING PRICING TOOL")
+        print(f"    postcode: {data.get('postcode')}")
+        print(f"    service: skip")
+        print(f"    type: {data.get('product', '8yd')}")
+        
         try:
-            query = (
-                f"Get pricing for a {data.get('product', '8yd')} skip "
-                f"at postcode {data.get('postcode')} "
-                f"for waste type {data.get('waste_type', 'general')}."
+            # Find and call SMPAPITool
+            smp_tool = None
+            for tool in self.tools:
+                if hasattr(tool, 'name') and tool.name == 'smp_api':
+                    smp_tool = tool
+                    break
+            
+            if not smp_tool:
+                print("❌ SKIP AGENT: SMPAPITool not found")
+                return "Pricing tool not available"
+            
+            # Call the exact method from SMPAPITool
+            result = smp_tool._run(
+                action="get_pricing",
+                postcode=data.get('postcode'),
+                service="skip", 
+                type=data.get('product', '8yd')
             )
-            response = self.executor.invoke({"input": query})
-            return response["output"]
+            
+            print(f"💰 SKIP AGENT: PRICING RESULT: {json.dumps(result, indent=2)}")
+            
+            if result.get('success'):
+                price = result.get('price', result.get('cost', 'N/A'))
+                return f"💰 Skip hire price: £{price}. Ready to book?"
+            else:
+                error = result.get('error', 'pricing failed')
+                print(f"❌ SKIP AGENT: Pricing error: {error}")
+                return f"Unable to get pricing: {error}"
+                
         except Exception as e:
+            print(f"❌ SKIP AGENT: PRICING EXCEPTION: {str(e)}")
             return f"Error getting pricing: {str(e)}"
-
+    
     def _create_booking(self, data: Dict[str, Any]) -> str:
+        booking_ref = str(uuid.uuid4())[:8]
+        
+        print(f"📋 SKIP AGENT: CALLING BOOKING TOOL")
+        print(f"    postcode: {data.get('postcode')}")
+        print(f"    service: skip")
+        print(f"    type: {data.get('product', '8yd')}")
+        print(f"    firstName: {data.get('firstName')}")
+        print(f"    phone: {data.get('phone')}")
+        print(f"    booking_ref: {booking_ref}")
+        
         try:
-            booking_ref = str(uuid.uuid4())[:8]
-            query = (
-                f"Create booking for {data.get('firstName', 'customer')} "
-                f"at postcode {data.get('postcode')} "
-                f"for a {data.get('product', '8yd')} skip. "
-                f"Phone: {data.get('phone', 'unknown')}. "
-                f"Booking reference: {booking_ref}."
+            # Find and call SMPAPITool
+            smp_tool = None
+            for tool in self.tools:
+                if hasattr(tool, 'name') and tool.name == 'smp_api':
+                    smp_tool = tool
+                    break
+            
+            if not smp_tool:
+                print("❌ SKIP AGENT: SMPAPITool not found")
+                return "Booking tool not available"
+            
+            # Call the exact method from SMPAPITool
+            result = smp_tool._run(
+                action="create_booking_quote",
+                postcode=data.get('postcode'),
+                service="skip", 
+                type=data.get('product', '8yd'),
+                firstName=data.get('firstName'),
+                phone=data.get('phone'),
+                booking_ref=booking_ref
             )
-            response = self.executor.invoke({"input": query})
-            return response["output"]
+            
+            print(f"📋 SKIP AGENT: BOOKING RESULT: {json.dumps(result, indent=2)}")
+            
+            if result.get('success'):
+                payment_link = result.get('payment_link', '')
+                price = result.get('final_price', result.get('price', 'N/A'))
+                response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}"
+                if payment_link:
+                    response += f", Payment: {payment_link}"
+                return response
+            else:
+                error = result.get('error', 'booking failed')
+                print(f"❌ SKIP AGENT: Booking error: {error}")
+                return f"Unable to create booking: {error}"
+                
         except Exception as e:
+            print(f"❌ SKIP AGENT: BOOKING EXCEPTION: {str(e)}")
             return f"Error creating booking: {str(e)}"
