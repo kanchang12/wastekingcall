@@ -1,139 +1,174 @@
-# agents/man_van_agent.py - FIXED VERSION
-# FIXES: No more false heavy item detection, proper negation handling
-
-import json 
+import json
 import re
+import uuid
+import os
+import PyPDF2
 from typing import Dict, Any, List
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import BaseTool
 from langchain.prompts import ChatPromptTemplate
-from utils.rules_processor import RulesProcessor
+
+# PDF RULES CACHE
+_PDF_RULES_CACHE = None
+# AGENT STATE STORAGE
+_AGENT_STATES = {}
 
 class ManVanAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-
-        self.rules_processor = RulesProcessor()
-        rule_text = "\n".join(json.dumps(self.rules_processor.get_rules_for_agent(agent), indent=2) for agent in ["skip_hire", "man_and_van", "grab_hire"])
-        rule_text = rule_text.replace("{", "{{").replace("}", "}}")
+        self.pdf_rules = self._load_pdf_rules_with_cache()
         
-        # Simple prompt - no complex PDF rules
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Man & Van agent.
-Out side office calls, you will attend, never forward but try to make the sale get price, get booking link, given nothing else is stopping, make the sale
-""" + rule_text + """
-HEAVY ITEMS RULE:
-Man & Van CANNOT handle: bricks, concrete, soil, rubble, sand, stone
+            ("system", """You are Man & Van agent. Follow 9-step sequence:
+1. name 2. postcode 3. product 4. waste type 5. quantity 6. product specific 7. price 8. date 9. booking
 
-If heavy items detected: "Sorry mate, heavy materials need Skip Hire service."
-
-WORKFLOW:
-1. Check for heavy items FIRST - if found, REFUSE
-2. Get pricing or create booking as requested
-3. Ask for missing info if needed
-
-Be helpful and direct."""),
-            ("human", "Customer: {input}\n\nPostcode: {postcode}\nItems: {items}"),
+Ask questions in sequence. Save state. Use tools for pricing and booking.
+If customer needs different service, transfer back to orchestrator with: TRANSFER_TO_ORCHESTRATOR:{collected_data}"""),
+            ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
         ])
         
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
-        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True, max_iterations=5)
+        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
+    
+    def _load_pdf_rules_with_cache(self) -> str:
+        global _PDF_RULES_CACHE
+        if _PDF_RULES_CACHE is not None:
+            return _PDF_RULES_CACHE
+        try:
+            pdf_path = os.path.join('data', 'rules', 'all rules.pdf')
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                _PDF_RULES_CACHE = text
+                return text
+            else:
+                _PDF_RULES_CACHE = "PDF rules not found"
+                return _PDF_RULES_CACHE
+        except Exception as e:
+            _PDF_RULES_CACHE = f"Error loading PDF: {str(e)}"
+            return _PDF_RULES_CACHE
+    
+    def _load_state(self, conversation_id: str) -> Dict[str, Any]:
+        global _AGENT_STATES
+        return _AGENT_STATES.get(conversation_id, {})
+    
+    def _save_state(self, conversation_id: str, data: Dict[str, Any]):
+        global _AGENT_STATES
+        _AGENT_STATES[conversation_id] = data
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        """Process with FIXED heavy item detection"""
+        conversation_id = context.get('conversation_id') if context else 'default'
+        previous_state = self._load_state(conversation_id)
+        extracted_data = self._extract_data(message, context)
+        combined_data = {**previous_state, **extracted_data}
         
-        # FIXED: Proper data extraction
-        extracted_data = self._extract_data_fixed(message, context)
+        transfer_check = self._check_transfer_needed_with_rules(message, combined_data)
+        if transfer_check:
+            self._save_state(conversation_id, combined_data)
+            return f"TRANSFER_TO_ORCHESTRATOR:{json.dumps(combined_data)}"
         
-        print(f"🔧 MAV DATA: {json.dumps(extracted_data, indent=2)}")
+        current_step = self._determine_step(combined_data)
+        response = ""
         
-        # Check for heavy items 
-        heavy_items = None
-        if heavy_items:
-            print(f"🔧 HEAVY ITEMS DETECTED: {heavy_items}")
-            return f"Sorry mate, {', '.join(heavy_items)} are too heavy for Man & Van. You need Skip Hire for that."
-        
-        # Process normally if no heavy items
-        postcode = extracted_data.get('postcode', 'NOT PROVIDED')
-        items = extracted_data.get('items', 'NOT PROVIDED')
-        
-        agent_input = {
-            "input": message,
-            "postcode": postcode,
-            "items": items
-        }
-        
-        response = self.executor.invoke(agent_input)
-        return response["output"]
-    
-    def _extract_data_fixed(self, message: str, context: Dict = None) -> Dict[str, Any]:
-        """FIXED: Handles negation properly - no false heavy item detection"""
-        data = {}
-        
-        # Get context data
-        if context:
-            data.update(context)
-        
-        message_lower = message.lower()
-        
-        # FIXED: Check for negation FIRST
-        negative_phrases = [
-            'no bricks', 'no concrete', 'no soil', 'no rubble', 'no sand', 'no stone',
-            'not bricks', 'not concrete', 'not soil', 'not rubble', 'not sand', 'not stone',
-            'no heavy', 'not heavy', 'no construction', 'not construction'
-        ]
-        
-        has_negation = any(phrase in message_lower for phrase in negative_phrases)
-        
-        if has_negation:
-            print(f"✅ NEGATION DETECTED - ignoring heavy item keywords")
-            data['heavy_items'] = []  # Customer explicitly said NO heavy items
+        if current_step == 'name' and not combined_data.get('firstName'):
+            response = "What's your name?"
+        elif current_step == 'postcode' and not combined_data.get('postcode'):
+            response = "What's your postcode?"
+        elif current_step == 'product' and not combined_data.get('product'):
+            response = "What service do you need?"
+        elif current_step == 'waste_type' and not combined_data.get('waste_type'):
+            response = "What items need collecting?"
+        elif current_step == 'quantity' and not combined_data.get('quantity'):
+            response = "How many items do you have?"
+        elif current_step == 'product_specific' and not combined_data.get('product_specific'):
+            response = "Any specific requirements?"
+        elif current_step == 'price':
+            combined_data['has_pricing'] = True
+            response = self._get_pricing(combined_data)
+        elif current_step == 'date' and not combined_data.get('preferred_date'):
+            response = "When would you like collection?"
+        elif current_step == 'booking':
+            response = self._create_booking(combined_data)
         else:
-            # Only check for heavy items if no negation
-            heavy_items = ['brick', 'bricks', 'concrete', 'soil', 'rubble', 'sand', 'stone', 'mortar', 'cement']
-            found_heavy = []
-            
-            for item in heavy_items:
-                if item in message_lower:
-                    pass
-            
-            data['heavy_items'] = found_heavy
-            if found_heavy:
-                print(f"❌ FOUND HEAVY ITEMS: {found_heavy}")
+            response = "What's your name?"
         
-        # Extract light items (furniture etc)
-        light_items = ['sofa', 'chair', 'table', 'bed', 'mattress', 'furniture', 'appliance', 'fridge', 'bags', 'boxes']
-        found_light = []
+        self._save_state(conversation_id, combined_data)
+        return response
+    
+    def _check_transfer_needed_with_rules(self, message: str, data: Dict[str, Any]) -> bool:
+        message_lower = message.lower()
+        if any(word in message_lower for word in ['skip', 'grab', 'grab hire']):
+            return True
+        return False
+    
+    def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
+        data = context.copy() if context else {}
         
-        for item in light_items:
-            if item in message_lower:
-                found_light.append(item)
-        
-        if found_light:
-            data['items'] = ', '.join(found_light)
-            print(f"✅ FOUND LIGHT ITEMS: {data['items']}")
-        
-        # Extract postcode
-        postcode_match = re.search(r'(LS\d{4}|[A-Z]{1,2}\d{1,4}[A-Z]{0,2})', message.upper())
+        postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})', message.upper().replace(' ', ''))
         if postcode_match:
-            data['postcode'] = postcode_match.group(1).replace(' ', '')
-            print(f"✅ FOUND POSTCODE: {data['postcode']}")
+            data['postcode'] = postcode_match.group(1)
         
-        # Extract phone
+        name_match = re.search(r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', message, re.IGNORECASE)
+        if name_match:
+            data['firstName'] = name_match.group(1).strip().title()
+        
         phone_match = re.search(r'\b(07\d{9}|\d{11})\b', message)
         if phone_match:
             data['phone'] = phone_match.group(1)
-            print(f"✅ FOUND PHONE: {data['phone']}")
-        
-        # Extract name
-        name_match = re.search(r'[Nn]ame\s+(\w+)', message)
-        if name_match:
-            data['firstName'] = name_match.group(1)
-            print(f"✅ FOUND NAME: {data['firstName']}")
-        
-        data['service'] = 'mav'
-        data['type'] = '6yd'
-        
+            
+        if not data.get('waste_type') and any(word in message.lower() for word in ['furniture', 'sofa', 'bed', 'table']):
+            data['waste_type'] = message.strip()
+            
+        if not data.get('quantity') and any(word in message.lower() for word in ['full', 'half', 'bags', 'items']):
+            data['quantity'] = message.strip()
+            
+        if not data.get('preferred_date') and any(word in message.lower() for word in ['tomorrow', 'today', 'monday', 'week']):
+            data['preferred_date'] = message.strip()
+            
         return data
+    
+    def _determine_step(self, data: Dict[str, Any]) -> str:
+        if not data.get('firstName'): return 'name'
+        if not data.get('postcode'): return 'postcode'  
+        if not data.get('product'): return 'product'
+        if not data.get('waste_type'): return 'waste_type'
+        if not data.get('quantity'): return 'quantity'
+        if not data.get('product_specific'): return 'product_specific'
+        if not data.get('has_pricing'): return 'price'
+        if not data.get('preferred_date'): return 'date'
+        return 'booking'
+    
+    def _get_pricing(self, data: Dict[str, Any]) -> str:
+        try:
+            agent_input = {
+                "input": f"Get pricing for man and van at {data.get('postcode')}",
+                "postcode": data.get('postcode'),
+                "service": "mav",
+                "type": data.get('product', '6yd')
+            }
+            response = self.executor.invoke(agent_input)
+            return response["output"]
+        except Exception as e:
+            return f"Error getting pricing: {str(e)}"
+    
+    def _create_booking(self, data: Dict[str, Any]) -> str:
+        try:
+            booking_ref = str(uuid.uuid4())[:8]
+            agent_input = {
+                "input": f"Create booking for {data.get('firstName')}",
+                "postcode": data.get('postcode'),
+                "service": "mav", 
+                "type": data.get('product', '6yd'),
+                "firstName": data.get('firstName'),
+                "phone": data.get('phone'),
+                "booking_ref": booking_ref
+            }
+            response = self.executor.invoke(agent_input)
+            return response["output"]
+        except Exception as e:
+            return f"Error creating booking: {str(e)}"
