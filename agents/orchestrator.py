@@ -469,7 +469,7 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
                 if 'PERMIT SCRIPT (EXACT WORDS)' in self.pdf_rules:
                     start = self.pdf_rules.find('"For any skip placed on the road')
                     end = self.pdf_rules.find('"', start + 1)
-                    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+                    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
                     if start > 0 and end > start:
                         return self.pdf_rules[start+1:end]
             return None
