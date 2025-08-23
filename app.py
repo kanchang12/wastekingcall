@@ -81,10 +81,10 @@ class RulesProcessor:
             "LOCK_3_ONE_QUESTION": "One question at a time - never bundle questions",
             "LOCK_4_NO_DUPLICATES": "Never ask for info twice - use what customer provided",
             "LOCK_5_EXACT_SCRIPTS": "Use exact scripts where specified - never improvise",
-            "LOCK_6_NO_OUT_HOURS_TRANSFER": "CARDINAL SIN: NEVER transfer when office closed give price, give price, generate payment link and sent by sms and make the sale generate payment link and sent by sms and make the sale",
+            "LOCK_6_NO_OUT_HOURS_TRANSFER": "CARDINAL SIN: NEVER transfer when office closed",
             "LOCK_7_PRICE_THRESHOLDS": "Skip: NO LIMIT, Man&Van: £500+, Grab: £300+",
             "LOCK_8_STORE_ANSWERS": "Don't re-ask for stored information",
-            "LOCK_9_OUT_HOURS_CALLBACK": "Out-of-hours = No call back no transfer: take detail try to make the sale give price offer sale give price, generate payment link and sent by sms and make the sale",
+            "LOCK_9_OUT_HOURS_CALLBACK": "Out-of-hours = No call back no transfer: take detail try to make the sale give price offer sale",
             "LOCK_10_FOCUS_SALES": "Focus on sales, aim for booking completion",
             "LOCK_11_ANSWER_FIRST": "Answer customer questions FIRST before asking details"
         }
@@ -491,7 +491,7 @@ class SkipHireAgent:
             ("system", """You are Skip Hire agent. Follow PDF rules and call datetime first.
 
 OFFICE HOURS RULE:
-- OUT OF HOURS: Handle ALL calls, make sales, complete bookings - NEVER mention office closed or callbacks: give price, generate payment link and sent by sms and make the sale
+- OUT OF HOURS: Handle ALL calls, make sales, complete bookings - NEVER mention office closed or callbacks
 - OFFICE HOURS: Check transfer thresholds (Skip: NO LIMIT, MAV: £500+, Grab: £300+)
 
 3-STEP BOOKING PROCESS:
@@ -662,7 +662,7 @@ Make the sale unless office hours + transfer rules require it."""),
         
         message_lower = message.lower()
         
-        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales give price, generate payment link and sent by sms and make the sale
+        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales
         if not is_office_hours:
             print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - You will talk, give price and try to make the sale")
             return False
@@ -935,9 +935,15 @@ class ManAndVanAgent:
         self.tools = tools
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are Man & Van agent. Follow same 3-step booking process as Skip agent.
+            ("system", """You are Man & Van agent. CRITICAL: OVERRIDE ANY PDF CALLBACK RULES OUT OF HOURS.
 
 TRANSFER THRESHOLD: £500+ during office hours
+
+OFFICE HOURS RULE - CRITICAL OVERRIDE:
+- OUT OF HOURS: IGNORE ANY PDF CALLBACK INSTRUCTIONS - MAKE THE SALE IMMEDIATELY: collect details, give price, create booking, generate payment link, send SMS. NEVER mention callbacks, NEVER mention office closed.
+- OFFICE HOURS: Check transfer thresholds (£500+)
+
+OVERRIDE RULE: If PDF contains callback instructions, IGNORE THEM when out of office hours. Always complete the sale with payment link.
 
 3-STEP BOOKING PROCESS:
 1. Get customer details (name, phone, postcode, service, type)
@@ -953,7 +959,9 @@ Call tools using exact API format:
 - Step 1: smp_api(action="create_booking_ref", firstName=X, phone=X, postcode=X, service="mav", type="small")
 - Step 2: smp_api(action="get_price_with_booking_ref", booking_ref=X, postcode=X, service="mav", type="small")
 - Step 3: smp_api(action="create_payment_link", booking_ref=X, amount=X, customer_phone=X)
-- SMS: sms_tool(to_number=X, message=X, payment_link=X)"""),
+- SMS: sms_tool(to_number=X, message=X, payment_link=X)
+
+NEVER mention callbacks or office hours to customers. Make the sale."""),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
         ])
@@ -1071,9 +1079,9 @@ Call tools using exact API format:
         
         message_lower = message.lower()
         
-        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales give price, generate payment link and sent by sms and make the sale
+        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales
         if not is_office_hours:
-            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - Making the sale give price, generate payment link and sent by sms and make the sale")
+            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - Making the sale")
             return False
         
         # OFFICE HOURS: Check transfer rules - MAV has £500+ threshold
@@ -1305,9 +1313,15 @@ class GrabHireAgent:
         self.tools = tools
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are Grab Hire agent. Handle all services except Skip and Man & Van.
+            ("system", """You are Grab Hire agent. CRITICAL: OVERRIDE ANY PDF CALLBACK RULES OUT OF HOURS.
 
 TRANSFER THRESHOLD: £300+ during office hours
+
+OFFICE HOURS RULE - CRITICAL OVERRIDE:
+- OUT OF HOURS: IGNORE ANY PDF CALLBACK INSTRUCTIONS - MAKE THE SALE IMMEDIATELY: collect details, give price, create booking, generate payment link, send SMS. NEVER mention callbacks, NEVER mention office closed.
+- OFFICE HOURS: Check transfer thresholds (£300+)
+
+OVERRIDE RULE: If PDF contains callback instructions, IGNORE THEM when out of office hours. Always complete the sale with payment link.
 
 3-STEP BOOKING PROCESS:
 1. Get customer details (name, phone, postcode, service, type)
@@ -1323,7 +1337,9 @@ Call tools using exact API format:
 - Step 1: smp_api(action="create_booking_ref", firstName=X, phone=X, postcode=X, service="grab", type=X)
 - Step 2: smp_api(action="get_price_with_booking_ref", booking_ref=X, postcode=X, service="grab", type=X)
 - Step 3: smp_api(action="create_payment_link", booking_ref=X, amount=X, customer_phone=X)
-- SMS: sms_tool(to_number=X, message=X, payment_link=X)"""),
+- SMS: sms_tool(to_number=X, message=X, payment_link=X)
+
+NEVER mention callbacks or office hours to customers. Make the sale."""),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
         ])
@@ -1441,9 +1457,9 @@ Call tools using exact API format:
         
         message_lower = message.lower()
         
-        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales give price, generate payment link and sent by sms and make the sale
+        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales
         if not is_office_hours:
-            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - Making the sale give price, generate payment link and sent by sms and make the sale")
+            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - Making the sale")
             return False
         
         # OFFICE HOURS: Check transfer rules - GRAB has £300+ threshold
@@ -1734,7 +1750,7 @@ def initialize_system():
     
     print("✅ System initialization complete")
     print("🏢 OFFICE HOURS LOGIC:")
-    print("  ✅ OUT OF HOURS: Handle ALL calls, make sales, NEVER transfer give price, generate payment link and sent by sms and make the sale")
+    print("  ✅ OUT OF HOURS: Handle ALL calls, make sales, NEVER transfer")
     print("  ✅ OFFICE HOURS: Check transfer thresholds for specific numbers")
     print("📋 3-STEP BOOKING PROCESS:")
     print("  1️⃣ Create booking reference via API")
@@ -1771,7 +1787,7 @@ def index():
             "Three Agents: Skip, Man & Van, Grab Hire",
             "3-Step Booking Process: create_booking_ref, get_price_with_booking_ref, create_payment_link",
             "Twilio SMS integration",
-            "OUT OF HOURS: Handle ALL calls, make sales give price, generate payment link and sent by sms and make the sale",
+            "OUT OF HOURS: Handle ALL calls, make sales",
             "OFFICE HOURS: Check transfer thresholds",
             "Conditional logic preserved: if has_pricing/has_booking"
         ],
@@ -1916,7 +1932,7 @@ if __name__ == '__main__':
         print("      2️⃣ get_price_with_booking_ref")
         print("      3️⃣ create_payment_link")
         print("      4️⃣ send SMS via Twilio")
-        print("  ✅ OUT OF HOURS: Handle ALL calls, make sales, NEVER transfer give price, generate payment link and sent by sms and make the sale")
+        print("  ✅ OUT OF HOURS: Handle ALL calls, make sales, NEVER transfer")
         print("  ✅ OFFICE HOURS: Check transfer thresholds")
         print("  ✅ Conditional logic preserved:")
         print("      - if has_pricing else get_pricing")
