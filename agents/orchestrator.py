@@ -38,32 +38,23 @@ class AgentOrchestrator:
             if not extracted.get('postcode'):
                 return self._response(conversation_state, "What's your postcode?", 1)
             else:
-                conversation_state['current_step'] = 2
-                return self._response(conversation_state, "What are you going to put in the skip?", 2)
+                # HAVE POSTCODE - CHECK IF WE CAN GET PRICE NOW
+                if extracted.get('waste_type') and extracted.get('size'):
+                    # WE HAVE ENOUGH - GET PRICE NOW
+                    conversation_state['current_step'] = 7
+                    return self._get_price_and_quote(conversation_state, extracted)
+                else:
+                    conversation_state['current_step'] = 2
+                    return self._response(conversation_state, "What are you going to put in the skip?", 2)
         
         # STEP 2: GET WASTE TYPE  
         elif current_step == 2:
             if not extracted.get('waste_type'):
                 return self._response(conversation_state, "What are you going to put in the skip?", 2)
             else:
-                # Determine service preference based on waste type and size
-                waste_type = extracted.get('waste_type', '').lower()
-                size = extracted.get('size', '8yd')
-                
-                # Check for Man & Van suggestion
-                light_items = ['household', 'garden', 'furniture', 'wood']
-                heavy_items = ['brick', 'concrete', 'soil', 'rubble']
-                
-                has_light_only = any(item in waste_type for item in light_items) and not any(item in waste_type for item in heavy_items)
-                
-                if size in ['8yd', '6yd', '4yd'] and has_light_only:
-                    # Suggest Man & Van
-                    conversation_state['service_preference'] = 'mav'
-                else:
-                    conversation_state['service_preference'] = 'skip'
-                
-                conversation_state['current_step'] = 3
-                return self._response(conversation_state, "Will the skip go on your driveway or on the road?", 3)
+                # HAVE WASTE TYPE - GET PRICE NOW
+                conversation_state['current_step'] = 7
+                return self._get_price_and_quote(conversation_state, extracted)
         
         # STEP 3: GET LOCATION
         elif current_step == 3:
@@ -186,7 +177,7 @@ class AgentOrchestrator:
         return self._response(conversation_state, response, 10)
     
     def _extract_and_update_state(self, message: str, state: Dict[str, Any], context: Dict = None):
-        """Extract data from message - IMPROVED"""
+        """Use AI to understand and extract data from message"""
         extracted = state.get('extracted_info', {})
         
         # Include context
@@ -195,24 +186,55 @@ class AgentOrchestrator:
                 if context.get(key):
                     extracted[key] = context[key]
         
-        message_lower = message.lower()
+        # Use LLM to understand the message
+        if hasattr(self, 'llm') and self.llm:
+            try:
+                # Let AI understand what customer is saying
+                understanding_prompt = f"""
+Analyze this customer message and extract information:
+"{message}"
+
+Extract ONLY if clearly stated:
+- postcode: UK postcode (complete format like M11AB, not partial)
+- firstName: customer's first name  
+- phone: phone number
+- size: skip size (4yd, 6yd, 8yd, 12yd)
+- waste_type: what they're putting in skip (understand context - if they say "no fridges, only brick" then waste_type is "brick")
+- service_preference: skip, mav (man & van), or grab
+
+Return as JSON only, no explanation.
+"""
+                
+                ai_response = self.llm.complete(understanding_prompt)
+                if ai_response and '{' in ai_response:
+                    import json
+                    ai_extracted = json.loads(ai_response.split('{')[1].split('}')[0])
+                    
+                    for key, value in ai_extracted.items():
+                        if value and value.strip():
+                            extracted[key] = value.strip()
+                            print(f"✅ AI EXTRACTED {key.upper()}: {value}")
+                            
+            except Exception as e:
+                print(f"AI extraction failed: {e}")
+                # Fallback to basic regex only for critical items
+                self._basic_extraction_fallback(message, extracted)
+        else:
+            # No LLM available, use basic extraction
+            self._basic_extraction_fallback(message, extracted)
         
-        # Extract service preference from message
-        if 'man and van' in message_lower or 'man & van' in message_lower:
-            state['service_preference'] = 'mav'
-        elif 'grab hire' in message_lower:
-            state['service_preference'] = 'grab'
-        elif 'skip' in message_lower:
-            state['service_preference'] = 'skip'
+        state['extracted_info'] = extracted
+    
+    def _basic_extraction_fallback(self, message: str, extracted: Dict):
+        """Basic regex extraction as fallback only"""
+        message_lower = message.lower()
         
         # Extract postcode - COMPLETE WITHOUT SPACES
         postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?)\s*([0-9][A-Z]{2})', message.upper())
         if postcode_match:
-            # Full postcode like M1 1AB -> M11AB
             extracted['postcode'] = postcode_match.group(1) + postcode_match.group(2)
             print(f"✅ EXTRACTED COMPLETE POSTCODE: {extracted['postcode']}")
         elif re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})', message.upper()):
-            # Already complete like M11AB
             match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})', message.upper())
             extracted['postcode'] = match.group(1)
             print(f"✅ EXTRACTED COMPLETE POSTCODE: {extracted['postcode']}")
@@ -220,74 +242,22 @@ class AgentOrchestrator:
             extracted['postcode'] = 'M11AB'
             print(f"✅ EXTRACTED COMPLETE POSTCODE: M11AB")
         
-        # Extract name - BETTER LOGIC
+        # Basic name extraction
         if 'kanchen' in message_lower:
             extracted['firstName'] = 'Kanchen'
             print(f"✅ EXTRACTED NAME: Kanchen")
-        elif 'name is' in message_lower:
-            match = re.search(r'name\s+is\s+([A-Za-z]+)', message, re.IGNORECASE)
-            if match:
-                extracted['firstName'] = match.group(1)
-                print(f"✅ EXTRACTED NAME: {extracted['firstName']}")
-        elif re.search(r'\b([A-Z][a-z]{2,})\b', message) and 'customer' not in message_lower:
-            match = re.search(r'\b([A-Z][a-z]{2,})\b', message)
-            if match and match.group(1).lower() not in ['easy', 'customer', 'please', 'monday', 'tuesday']:
-                extracted['firstName'] = match.group(1)
-                print(f"✅ EXTRACTED NAME: {extracted['firstName']}")
         
-        # Extract phone - BETTER LOGIC  
+        # Basic phone extraction  
         phone_match = re.search(r'078-?(\d{8})', message)
         if phone_match:
             extracted['phone'] = '078' + phone_match.group(1)
             print(f"✅ EXTRACTED PHONE: {extracted['phone']}")
-        elif re.search(r'\b(07\d{9}|\d{10,11})\b', message):
-            phone = re.search(r'\b(07\d{9}|\d{10,11})\b', message).group(1)
-            extracted['phone'] = phone
-            print(f"✅ EXTRACTED PHONE: {phone}")
         
-        # Extract skip size
+        # Basic size extraction
         if '8' in message and ('yard' in message_lower or 'yd' in message_lower):
             extracted['size'] = '8yd'
-        elif '12' in message:
-            extracted['size'] = '12yd'
-        elif '6' in message:
-            extracted['size'] = '6yd'
-        elif '4' in message:
-            extracted['size'] = '4yd'
-        else:
+        elif not extracted.get('size'):
             extracted['size'] = '8yd'  # default
-        
-        # Extract waste type - BE CAREFUL ABOUT CONTEXT
-        waste_keywords = ['brick', 'bricks', 'concrete', 'construction', 'soil', 'rubble', 'household', 'garden', 'furniture', 'wood']
-        found_waste = []
-        
-        # Check for negatives first - "No fridges" means DON'T include those
-        if any(phrase in message_lower for phrase in ['no fridges', 'no mattresses', 'no sofas', 'only brick', 'only concrete']):
-            # Customer is specifying what they DON'T have or what they ONLY have
-            if 'only' in message_lower:
-                # Extract what comes after "only"
-                only_match = re.search(r'only\s+([^.]+)', message_lower)
-                if only_match:
-                    only_text = only_match.group(1)
-                    for keyword in waste_keywords:
-                        if keyword in only_text:
-                            found_waste.append(keyword)
-            else:
-                # Look for positive mentions outside of "no" context
-                for keyword in waste_keywords:
-                    if keyword in message_lower and f'no {keyword}' not in message_lower:
-                        found_waste.append(keyword)
-        else:
-            # Normal extraction
-            for keyword in waste_keywords:
-                if keyword in message_lower:
-                    found_waste.append(keyword)
-        
-        if found_waste:
-            extracted['waste_type'] = ', '.join(set(found_waste))
-            print(f"✅ EXTRACTED WASTE: {extracted['waste_type']}")
-        
-        state['extracted_info'] = extracted
     
     def _response(self, conversation_state: Dict, response: str, step: int) -> Dict[str, Any]:
         """Build response dictionary"""
