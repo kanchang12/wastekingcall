@@ -443,12 +443,13 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         # Get base price from API (not hardcoded)
 
         # get the price string from the dict first
-        price_str = str(pricing_result.get('price', 0))
+        pricing_result = self._get_pricing(postcode, 'skip', skip_size)
         
         # clean it up
-        price_clean = price_str.replace("£", "").replace(",", "").strip()
+        price_str = str(pricing_result.get('price', 0))
         
         # convert to float
+        price_clean = price_str.replace("£", "").replace(",", "").strip()
         base_price = float(price_clean)
         
         if base_price == 0:
