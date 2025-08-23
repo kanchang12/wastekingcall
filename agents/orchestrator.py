@@ -76,6 +76,15 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         self._extract_and_update_state(message, conversation_state, context)
         extracted = conversation_state.get('extracted_info', {})
         
+        # SMART CONTEXT EXTRACTION - if customer mentions driveway, access, restrictions in message
+        if any(word in message.lower() for word in ['driveway', 'drive']):
+            extracted['location_checked'] = True
+            conversation_state['needs_permit'] = False
+        if any(word in message.lower() for word in ['easy access', 'no access', 'access fine', 'no restrictions', 'good access']):
+            extracted['access_checked'] = True
+        if 'no' in message.lower() and any(word in message.lower() for word in ['fridge', 'mattress', 'sofa', 'furniture']):
+            extracted['prohibited_checked'] = True
+        
         # Current stage tracking
         stage = conversation_state.get('stage', 'A1_INFO_GATHERING')
         
@@ -89,6 +98,13 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         phone = extracted.get('phone')
         skip_size = extracted.get('size', '8yd')
         
+        # Update current variables with latest extracted values
+        postcode = extracted.get('postcode') or postcode
+        waste_type = extracted.get('waste_type') or waste_type  
+        firstName = extracted.get('firstName') or firstName
+        phone = extracted.get('phone') or phone
+        skip_size = extracted.get('size', '8yd')
+        
         # Check what we have vs what we need
         print(f"📋 INFO CHECK:")
         print(f"   📍 Postcode: {postcode}")
@@ -97,8 +113,21 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         print(f"   📱 Phone: {phone}")
         print(f"   📏 Size: {skip_size}")
         
+        # SMART SKIP TO PRICING - If customer asks for price and has basic info
+        if any(word in message.lower() for word in ['price', 'cost', 'quote', 'total']) and postcode and waste_type:
+            print("🚀 SMART SKIP: Customer wants pricing, has basic info - jumping to quote generation")
+            
+            # Mark checks as done if customer confirms them in message
+            if any(word in message.lower() for word in ['driveway', 'easy access', 'no restrictions', 'confirmed']):
+                extracted['location_checked'] = True
+                extracted['access_checked'] = True
+                extracted['prohibited_checked'] = True
+            
+            conversation_state['stage'] = 'A7_QUOTE_PRESENTATION'
+            response = self._generate_final_quote(conversation_state, extracted, postcode, skip_size)
+        
         # A1: Missing basic info? Ask for it
-        if not postcode:
+        elif not postcode:
             conversation_state['stage'] = 'A1_INFO_GATHERING'
             response = "What's your postcode?"
         elif not waste_type:
@@ -161,6 +190,8 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         # A3: Location response - PERMIT SCRIPT FROM PDF
         elif stage == 'A3_LOCATION_RESPONSE':
             location = message.lower()
+            extracted['location_checked'] = True  # Mark location as checked
+            
             if any(word in location for word in ['road', 'street', 'outside', 'front', 'pavement']):
                 # Get permit script from PDF
                 permit_script = self._extract_pdf_rule('PERMIT SCRIPT')
@@ -198,11 +229,13 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         
         # A4: Access response
         elif stage == 'A4_ACCESS_RESPONSE':
+            # Mark access as checked regardless of response
+            extracted['access_checked'] = True
+            
             if any(word in message.lower() for word in ['narrow', 'difficult', 'tight', 'complex', 'restricted']):
                 response = "For complex access situations, let me put you through to our team for a site assessment."
                 # Would transfer in office hours, callback out of hours
             else:
-                extracted['access_checked'] = True
                 conversation_state['stage'] = 'A5_PROHIBITED'
                 response = self._continue_to_prohibited_check(conversation_state, extracted)
         
@@ -348,8 +381,8 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
                 extracted['firstName'] = match.group(1)
                 print(f"✅ EXTRACTED NAME: {match.group(1)}")
         
-        # Extract phone
-        phone_match = re.search(r'\b(07\d{9}|\d{11})\b', message)
+        # Extract phone - Fixed regex for UK mobile numbers
+        phone_match = re.search(r'\b(07\d{8}|\d{10,11})\b', message)
         if phone_match:
             phone = phone_match.group(1)
             extracted['phone'] = phone
