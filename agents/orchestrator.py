@@ -67,12 +67,7 @@ class AgentOrchestrator:
         
         # STEP 3: GET LOCATION
         elif current_step == 3:
-            # ANY answer moves to step 4
-            if 'road' in message.lower() or 'street' in message.lower():
-                conversation_state['needs_permit'] = True
-            else:
-                conversation_state['needs_permit'] = False
-            
+            # ANY answer moves to step 4 - API handles permit costs
             conversation_state['current_step'] = 4
             return self._response(conversation_state, "Is there easy access for our lorry to deliver the skip?", 4)
         
@@ -210,14 +205,20 @@ class AgentOrchestrator:
         elif 'skip' in message_lower:
             state['service_preference'] = 'skip'
         
-        # Extract postcode - IMPROVED
-        postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,4}\s?[0-9]?[A-Z]{0,2})', message.upper())
+        # Extract postcode - COMPLETE WITHOUT SPACES
+        postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?)\s*([0-9][A-Z]{2})', message.upper())
         if postcode_match:
-            extracted['postcode'] = postcode_match.group(1).replace(' ', '')
-            print(f"✅ EXTRACTED POSTCODE: {extracted['postcode']}")
-        elif 'M1' in message.upper():
-            extracted['postcode'] = 'M1'
-            print(f"✅ EXTRACTED POSTCODE: M1")
+            # Full postcode like M1 1AB -> M11AB
+            extracted['postcode'] = postcode_match.group(1) + postcode_match.group(2)
+            print(f"✅ EXTRACTED COMPLETE POSTCODE: {extracted['postcode']}")
+        elif re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})', message.upper()):
+            # Already complete like M11AB
+            match = re.search(r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})', message.upper())
+            extracted['postcode'] = match.group(1)
+            print(f"✅ EXTRACTED COMPLETE POSTCODE: {extracted['postcode']}")
+        elif 'M1 1AB' in message.upper():
+            extracted['postcode'] = 'M11AB'
+            print(f"✅ EXTRACTED COMPLETE POSTCODE: M11AB")
         
         # Extract name - BETTER LOGIC
         if 'kanchen' in message_lower:
