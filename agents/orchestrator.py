@@ -257,12 +257,31 @@ class AgentOrchestrator:
         else:
             extracted['size'] = '8yd'  # default
         
-        # Extract waste type
-        waste_keywords = ['brick', 'concrete', 'construction', 'soil', 'rubble', 'household', 'garden', 'furniture', 'wood']
+        # Extract waste type - BE CAREFUL ABOUT CONTEXT
+        waste_keywords = ['brick', 'bricks', 'concrete', 'construction', 'soil', 'rubble', 'household', 'garden', 'furniture', 'wood']
         found_waste = []
-        for keyword in waste_keywords:
-            if keyword in message_lower:
-                found_waste.append(keyword)
+        
+        # Check for negatives first - "No fridges" means DON'T include those
+        if any(phrase in message_lower for phrase in ['no fridges', 'no mattresses', 'no sofas', 'only brick', 'only concrete']):
+            # Customer is specifying what they DON'T have or what they ONLY have
+            if 'only' in message_lower:
+                # Extract what comes after "only"
+                only_match = re.search(r'only\s+([^.]+)', message_lower)
+                if only_match:
+                    only_text = only_match.group(1)
+                    for keyword in waste_keywords:
+                        if keyword in only_text:
+                            found_waste.append(keyword)
+            else:
+                # Look for positive mentions outside of "no" context
+                for keyword in waste_keywords:
+                    if keyword in message_lower and f'no {keyword}' not in message_lower:
+                        found_waste.append(keyword)
+        else:
+            # Normal extraction
+            for keyword in waste_keywords:
+                if keyword in message_lower:
+                    found_waste.append(keyword)
         
         if found_waste:
             extracted['waste_type'] = ', '.join(set(found_waste))
