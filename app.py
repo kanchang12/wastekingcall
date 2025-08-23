@@ -173,7 +173,7 @@ class SMPAPITool(BaseTool):
         
         try:
             if action == "create_booking":
-                result = self._create_booking(**kwargs)
+                result = self._create_booking_ref(**kwargs)
             elif action == "update_booking_with_search":
                 result = self._update_booking_with_search(**kwargs)
             elif action == "update_booking_with_details":
@@ -221,7 +221,7 @@ class SMPAPITool(BaseTool):
             return {"success": False, "error": str(e)}
 
     # OLD/DEPRECATED FUNCTIONS - THESE NOW USE 'pass'
-    def _create_booking_ref(self, **kwargs) -> Dict[str, Any]:
+    def _create_booking_ref1(self, **kwargs) -> Dict[str, Any]:
         """OLD/DEPRECATED FUNCTION"""
         pass
     
@@ -233,7 +233,7 @@ class SMPAPITool(BaseTool):
         """OLD/DEPRECATED FUNCTION"""
         pass
     
-    def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
+    def _get_pricing1(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
         """OLD/DEPRECATED FUNCTION"""
         pass
 
@@ -241,7 +241,7 @@ class SMPAPITool(BaseTool):
         """OLD/DEPRECATED FUNCTION"""
         pass
 
-    def _take_payment(self, customer_phone: Optional[str] = None, quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    def _take_paymen(self, customer_phone: Optional[str] = None, quote_id: Optional[str] = None, amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """OLD/DEPRECATED FUNCTION"""
         pass
 
@@ -250,12 +250,12 @@ class SMPAPITool(BaseTool):
         pass
 
     # NEW FUNCTIONS FOR THE 4-STEP PROCESS
-    def _create_booking(self, **kwargs) -> Dict[str, Any]:
+    def _create_booking_ref(self, **kwargs) -> Dict[str, Any]:
         """Step 1: Creates a new booking and returns a booking reference."""
         payload = {"type": "chatbot", "source": "wasteking.co.uk"}
         return self._send_request("api/booking/create", payload)
     
-    def _update_booking_with_search(self, booking_ref: str, postcode: str, service: str) -> Dict[str, Any]:
+    def _get_pricing(self, booking_ref: str, postcode: str, service: str) -> Dict[str, Any]:
         """Step 2: Updates a booking with search details to get prices."""
         payload = {"bookingRef": booking_ref, "search": {"postCode": postcode, "service": service}}
         return self._send_request("api/booking/update", payload)
@@ -265,7 +265,7 @@ class SMPAPITool(BaseTool):
         payload = {"bookingRef": booking_ref, "customer": customer_details, "service": service_details}
         return self._send_request("api/booking/update", payload)
 
-    def _update_booking_with_quote(self, booking_ref: str) -> Dict[str, Any]:
+    def take_payment(self, booking_ref: str) -> Dict[str, Any]:
         """Step 4: Finalizes the booking and gets the payment URL."""
         payload = {"bookingRef": booking_ref, "action": "quote", "postPaymentUrl": "https://wasteking.co.uk/thank-you/"}
         return self._send_request("api/booking/update", payload)
