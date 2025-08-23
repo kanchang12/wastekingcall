@@ -22,7 +22,8 @@ app = Flask(__name__)
 # ===============================
 class RulesProcessor:
     def __init__(self):
-        self.pdf_path = "data/rules/all rules.pdf"
+        #self.pdf_path = "data/rules/all rules.pdf"
+        elf.pdf_path = ""
         self.rules_data = self._load_all_rules()
     
     def _load_all_rules(self) -> Dict[str, Any]:
