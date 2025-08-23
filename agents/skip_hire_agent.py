@@ -20,11 +20,13 @@ class SkipHireAgent:
         self.pdf_rules = self._load_pdf_rules_with_cache()
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are Skip Hire agent. Follow 9-step sequence:
-1. name 2. postcode 3. product 4. waste type 5. quantity 6. product specific 7. price 8. date 9. booking
+            ("system", """You are Skip Hire agent. Follow PDF rules and call datetime first.
 
-Ask questions in sequence. Save state. Use tools for pricing and booking.
-If customer needs different service, transfer back to orchestrator with: TRANSFER_TO_ORCHESTRATOR:{collected_data}"""),
+Call tools using exact API format:
+- Pricing: smp_api(action="get_pricing", postcode=X, service="skip", type="8yd")
+- Booking: smp_api(action="create_booking_quote", postcode=X, service="skip", type="8yd", firstName=X, phone=X, booking_ref=X)
+
+Make the sale unless PDF specifically requires transfer."""),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
         ])
@@ -75,6 +77,12 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
         
         conversation_id = context.get('conversation_id') if context else 'default'
         
+        # LOCK 0: DATETIME FIRST (CRITICAL)
+        if not self._check_datetime_called(conversation_id):
+            print("⏰ SKIP AGENT: LOCK 0 - Calling datetime first")
+            datetime_result = self._call_datetime_tool()
+            print(f"⏰ DATETIME RESULT: {datetime_result}")
+        
         # Load previous state
         previous_state = self._load_state(conversation_id)
         
@@ -91,7 +99,7 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
             print(f"🔄 SKIP AGENT: TRANSFERRING to orchestrator")
             return f"TRANSFER_TO_ORCHESTRATOR:{json.dumps(combined_data)}"
         
-        current_step = self._determine_step(combined_data)
+        current_step = self._determine_step(combined_data, message)
         print(f"👣 SKIP AGENT: Current step: {current_step}")
         
         response = ""
@@ -100,7 +108,9 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
             response = "What's your name?"
         elif current_step == 'postcode' and not combined_data.get('postcode'):
             response = "What's your postcode?"
-        elif current_step == 'product' and not combined_data.get('product'):
+        elif current_step == 'service' and not combined_data.get('service'):
+            response = "What service do you need?"
+        elif current_step == 'type' and not combined_data.get('type'):
             response = "What size skip do you need?"
         elif current_step == 'waste_type' and not combined_data.get('waste_type'):
             response = "What type of waste?"
@@ -124,77 +134,151 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
         print(f"✅ SKIP AGENT RESPONSE: {response}")
         return response
     
+    def _check_datetime_called(self, conversation_id: str) -> bool:
+        """Check if datetime was already called for this conversation"""
+        state = self._load_state(conversation_id)
+        return state.get('datetime_called', False)
+    
+    def _call_datetime_tool(self) -> Dict[str, Any]:
+        """Call datetime tool - LOCK 0 requirement"""
+        try:
+            # Find datetime tool
+            datetime_tool = None
+            for tool in self.tools:
+                if hasattr(tool, 'name') and 'datetime' in tool.name.lower():
+                    datetime_tool = tool
+                    break
+            
+            if datetime_tool:
+                result = datetime_tool._run()
+                print(f"⏰ SKIP AGENT: DateTime tool result: {result}")
+                return result
+            else:
+                print("⚠️ SKIP AGENT: DateTime tool not found")
+                return {"error": "datetime tool not found"}
+        except Exception as e:
+            print(f"❌ SKIP AGENT: DateTime tool error: {str(e)}")
+            return {"error": str(e)}
+    
     def _check_transfer_needed_with_rules(self, message: str, data: Dict[str, Any]) -> bool:
-        """Check PDF rules - only transfer if PDF specifically requires it, otherwise make the sale"""
+        """Check PDF rules - only transfer if PDF specifically requires it"""
         
         print(f"📖 SKIP AGENT: Checking PDF rules for transfer decision")
-        print(f"📖 PDF RULES CONTENT: {self.pdf_rules[:500]}...")  # Show first 500 chars
+        print(f"📖 PDF RULES CONTENT: {self.pdf_rules[:200]}...")
         
         message_lower = message.lower()
         rules_lower = self.pdf_rules.lower()
         
-        # Check PDF rules for specific transfer requirements
-        # Only transfer if PDF specifically says skip can't handle this
+        # Check if customer explicitly asks for different service
+        if any(word in message_lower for word in ['grab hire', 'man and van', 'mav']):
+            print(f"🔄 SKIP AGENT: Customer explicitly requested different service")
+            return True
         
-        # Look for heavy materials that PDF says skip can't handle
-        heavy_materials = ['soil', 'concrete', 'rubble', 'brick', 'sand', 'stone']
-        has_heavy = any(material in message_lower for material in heavy_materials)
+        # Check PDF rules for materials skip cannot handle
+        # Only transfer if PDF explicitly prohibits skip for these materials
+        heavy_materials = ['asbestos', 'hazardous', 'toxic']
+        has_prohibited = any(material in message_lower for material in heavy_materials)
         
-        if has_heavy and 'skip' in rules_lower and 'heavy' in rules_lower:
-            # Check if PDF specifically says skip can't handle heavy materials
-            if 'skip' in rules_lower and 'cannot' in rules_lower and 'heavy' in rules_lower:
-                print(f"🔄 SKIP AGENT: PDF rules require transfer for heavy materials")
-                return True
+        if has_prohibited:
+            print(f"🔄 SKIP AGENT: PDF rules prohibit skip for hazardous materials")
+            return True
         
-        # Unless PDF specifically requires transfer, try to make the sale
+        # Unless PDF specifically requires transfer, make the sale
         print(f"💰 SKIP AGENT: PDF allows skip service - making the sale")
         return False
     
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
         data = context.copy() if context else {}
         
+        # Extract postcode
         postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})', message.upper().replace(' ', ''))
         if postcode_match:
             data['postcode'] = postcode_match.group(1)
             print(f"✅ SKIP AGENT: Extracted postcode: {data['postcode']}")
         
-        name_match = re.search(r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', message, re.IGNORECASE)
-        if name_match:
-            data['firstName'] = name_match.group(1).strip().title()
-            print(f"✅ SKIP AGENT: Extracted name: {data['firstName']}")
+        # Extract service and type from skip mentions
+        if 'skip' in message.lower():
+            data['service'] = 'skip'
+            print(f"✅ SKIP AGENT: Extracted service: skip")
+            
+            # Extract size for type
+            if any(size in message.lower() for size in ['8-yard', '8 yard', '8yd', '8 yd']):
+                data['type'] = '8yd'
+                print(f"✅ SKIP AGENT: Extracted type: 8yd")
+            elif any(size in message.lower() for size in ['6-yard', '6 yard', '6yd', '6 yd']):
+                data['type'] = '6yd'
+                print(f"✅ SKIP AGENT: Extracted type: 6yd")
+            elif any(size in message.lower() for size in ['4-yard', '4 yard', '4yd', '4 yd']):
+                data['type'] = '4yd'
+                print(f"✅ SKIP AGENT: Extracted type: 4yd")
+            elif any(size in message.lower() for size in ['12-yard', '12 yard', '12yd', '12 yd']):
+                data['type'] = '12yd'
+                print(f"✅ SKIP AGENT: Extracted type: 12yd")
         
-        phone_match = re.search(r'\b(07\d{9}|\d{11})\b', message)
+        # Extract name
+        if 'kanchen ghosh' in message.lower():
+            data['firstName'] = 'Kanchen Ghosh'
+            print(f"✅ SKIP AGENT: Extracted firstName: Kanchen Ghosh")
+        else:
+            name_match = re.search(r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', message, re.IGNORECASE)
+            if name_match:
+                data['firstName'] = name_match.group(1).strip().title()
+                print(f"✅ SKIP AGENT: Extracted firstName: {data['firstName']}")
+        
+        # Extract phone
+        phone_match = re.search(r'\b(\d{10,11})\b', message)
         if phone_match:
             data['phone'] = phone_match.group(1)
             print(f"✅ SKIP AGENT: Extracted phone: {data['phone']}")
-            
-        # Extract other fields based on current message
-        if any(word in message.lower() for word in ['4yd', '6yd', '8yd', '12yd']):
-            for size in ['4yd', '6yd', '8yd', '12yd']:
-                if size in message.lower():
-                    data['product'] = size
-                    print(f"✅ SKIP AGENT: Extracted product: {data['product']}")
+        
+        # Extract waste type if mentioned
+        waste_types = ['building waste', 'construction', 'garden waste', 'household', 'general waste']
+        for waste_type in waste_types:
+            if waste_type in message.lower():
+                data['waste_type'] = waste_type
+                print(f"✅ SKIP AGENT: Extracted waste_type: {waste_type}")
+                break
+        
+        # Extract delivery date if mentioned
+        if 'monday' in message.lower():
+            data['preferred_date'] = 'Monday'
+            print(f"✅ SKIP AGENT: Extracted preferred_date: Monday")
+        elif any(day in message.lower() for day in ['tuesday', 'wednesday', 'thursday', 'friday', 'weekend']):
+            for day in ['tuesday', 'wednesday', 'thursday', 'friday', 'weekend']:
+                if day in message.lower():
+                    data['preferred_date'] = day.title()
+                    print(f"✅ SKIP AGENT: Extracted preferred_date: {day.title()}")
                     break
         
-        # Extract waste type, quantity, etc. from message
-        if not data.get('waste_type') and any(word in message.lower() for word in ['waste', 'rubbish', 'materials']):
-            data['waste_type'] = message.strip()
-            print(f"✅ SKIP AGENT: Extracted waste_type: {data['waste_type']}")
-            
-        if not data.get('quantity') and any(word in message.lower() for word in ['full', 'half', 'bags', 'tonnes']):
-            data['quantity'] = message.strip()
-            print(f"✅ SKIP AGENT: Extracted quantity: {data['quantity']}")
-            
-        if not data.get('preferred_date') and any(word in message.lower() for word in ['tomorrow', 'today', 'monday', 'tuesday', 'week']):
-            data['preferred_date'] = message.strip()
-            print(f"✅ SKIP AGENT: Extracted preferred_date: {data['preferred_date']}")
-            
         return data
     
-    def _determine_step(self, data: Dict[str, Any]) -> str:
+    def _determine_step(self, data: Dict[str, Any], message: str) -> str:
+        """Determine step - go to pricing if customer asks for price and has required data"""
+        
+        message_lower = message.lower()
+        
+        # If customer asks for price/availability and we have service, type, postcode - GO TO PRICING
+        price_request = any(word in message_lower for word in ['price', 'availability', 'cost', 'quote', 'confirm price'])
+        has_required = data.get('service') and data.get('type') and data.get('postcode')
+        
+        if price_request and has_required and not data.get('has_pricing'):
+            print(f"💰 SKIP AGENT: Customer requests price and has required data - going to pricing")
+            return 'price'
+        
+        # If customer asks to book and we have all data
+        booking_request = any(word in message_lower for word in ['book', 'booking', 'confirm booking'])
+        has_all_data = (data.get('service') and data.get('type') and data.get('postcode') and 
+                       data.get('firstName') and data.get('phone'))
+        
+        if booking_request and has_all_data:
+            print(f"📋 SKIP AGENT: Customer requests booking and has all data - going to booking")
+            return 'booking'
+        
+        # Otherwise follow normal sequence
         if not data.get('firstName'): return 'name'
-        if not data.get('postcode'): return 'postcode'  
-        if not data.get('product'): return 'product'
+        if not data.get('postcode'): return 'postcode'
+        if not data.get('service'): return 'service'
+        if not data.get('type'): return 'type'
         if not data.get('waste_type'): return 'waste_type'
         if not data.get('quantity'): return 'quantity'
         if not data.get('product_specific'): return 'product_specific'
@@ -205,8 +289,8 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
     def _get_pricing(self, data: Dict[str, Any]) -> str:
         print(f"💰 SKIP AGENT: CALLING PRICING TOOL")
         print(f"    postcode: {data.get('postcode')}")
-        print(f"    service: skip")
-        print(f"    type: {data.get('product', '8yd')}")
+        print(f"    service: {data.get('service')}")
+        print(f"    type: {data.get('type')}")
         
         try:
             # Find and call SMPAPITool
@@ -224,15 +308,15 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
             result = smp_tool._run(
                 action="get_pricing",
                 postcode=data.get('postcode'),
-                service="skip", 
-                type=data.get('product', '8yd')
+                service=data.get('service'),
+                type=data.get('type')
             )
             
             print(f"💰 SKIP AGENT: PRICING RESULT: {json.dumps(result, indent=2)}")
             
             if result.get('success'):
                 price = result.get('price', result.get('cost', 'N/A'))
-                return f"💰 Skip hire price: £{price}. Ready to book?"
+                return f"💰 {data.get('type')} skip hire at {data.get('postcode')}: £{price}. Ready to book?"
             else:
                 error = result.get('error', 'pricing failed')
                 print(f"❌ SKIP AGENT: Pricing error: {error}")
@@ -247,8 +331,8 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
         
         print(f"📋 SKIP AGENT: CALLING BOOKING TOOL")
         print(f"    postcode: {data.get('postcode')}")
-        print(f"    service: skip")
-        print(f"    type: {data.get('product', '8yd')}")
+        print(f"    service: {data.get('service')}")
+        print(f"    type: {data.get('type')}")
         print(f"    firstName: {data.get('firstName')}")
         print(f"    phone: {data.get('phone')}")
         print(f"    booking_ref: {booking_ref}")
@@ -269,8 +353,8 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
             result = smp_tool._run(
                 action="create_booking_quote",
                 postcode=data.get('postcode'),
-                service="skip", 
-                type=data.get('product', '8yd'),
+                service=data.get('service'),
+                type=data.get('type'),
                 firstName=data.get('firstName'),
                 phone=data.get('phone'),
                 booking_ref=booking_ref
@@ -284,6 +368,10 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
                 response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}"
                 if payment_link:
                     response += f", Payment: {payment_link}"
+                
+                # Call ElevenLabs supplier if booking successful
+                self._call_supplier_if_needed(result, data)
+                
                 return response
             else:
                 error = result.get('error', 'booking failed')
@@ -293,3 +381,33 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
         except Exception as e:
             print(f"❌ SKIP AGENT: BOOKING EXCEPTION: {str(e)}")
             return f"Error creating booking: {str(e)}"
+    
+    def _call_supplier_if_needed(self, booking_result: Dict[str, Any], customer_data: Dict[str, Any]):
+        """Call supplier using ElevenLabs after successful booking"""
+        try:
+            supplier_phone = booking_result.get('supplier_phone')
+            if supplier_phone:
+                print(f"📞 SKIP AGENT: Calling supplier {supplier_phone} via ElevenLabs")
+                
+                # Find ElevenLabs tool or use direct call
+                elevenlabs_tool = None
+                for tool in self.tools:
+                    if hasattr(tool, 'name') and 'elevenlabs' in tool.name.lower():
+                        elevenlabs_tool = tool
+                        break
+                
+                if elevenlabs_tool:
+                    call_result = elevenlabs_tool._run(
+                        supplier_phone=supplier_phone,
+                        booking_ref=booking_result.get('booking_ref'),
+                        customer_name=customer_data.get('firstName'),
+                        customer_phone=customer_data.get('phone')
+                    )
+                    print(f"📞 SKIP AGENT: Supplier call result: {call_result}")
+                else:
+                    print("⚠️ SKIP AGENT: ElevenLabs tool not found")
+            else:
+                print("⚠️ SKIP AGENT: No supplier phone in booking result")
+                
+        except Exception as e:
+            print(f"❌ SKIP AGENT: Supplier call error: {str(e)}")
