@@ -26,7 +26,6 @@ class RulesProcessor:
         self.rules_data = self._load_all_rules()
     
     def _load_all_rules(self) -> Dict[str, Any]:
-        """Load rules from PDF first, fallback to hardcoded if PDF not available"""
         pdf_text = self._load_rules_from_pdf()
         
         if pdf_text:
@@ -37,7 +36,6 @@ class RulesProcessor:
             return self._get_hardcoded_rules()
     
     def _load_rules_from_pdf(self) -> str:
-        """Extract text from the WasteKing rules PDF"""
         try:
             if not Path(self.pdf_path).exists():
                 return ""
@@ -56,8 +54,6 @@ class RulesProcessor:
             return ""
     
     def _parse_wasteking_pdf(self, pdf_text: str) -> Dict[str, Any]:
-        """Parse the WasteKing PDF into structured rules"""
-        
         return {
             "lock_rules": self._extract_lock_rules(pdf_text),
             "exact_scripts": self._extract_exact_scripts(pdf_text),
@@ -73,7 +69,6 @@ class RulesProcessor:
         }
     
     def _extract_lock_rules(self, text: str) -> Dict[str, str]:
-        """Extract LOCK 0-11 mandatory enforcement rules"""
         return {
             "LOCK_0_DATETIME": "CRITICAL: Call get_current_datetime() IMMEDIATELY at conversation start",
             "LOCK_1_NO_GREETING": "NEVER say 'Hi I am Thomas' or any greeting",
@@ -219,7 +214,7 @@ class SMPAPITool(BaseTool):
         payload = {"bookingRef": booking_ref, "customer": customer_details, "service": service_details}
         return self._send_request("api/booking/update", payload)
         
-    def _update_booking_with_quote(self, booking_ref: str, **kwargs) -> Dict[str, Any]:
+    def _update_booking_with_quote(self, booking_ref: str) -> Dict[str, Any]:
         """Step 4: Finalizes the booking and gets the payment URL."""
         payload = {"bookingRef": booking_ref, "action": "quote", "postPaymentUrl": "https://wasteking.co.uk/thank-you/"}
         return self._send_request("api/booking/update", payload)
@@ -234,18 +229,16 @@ class DateTimeTool(BaseTool):
     def _run(self) -> Dict[str, Any]:
         now = datetime.now()
         
-        # Determine if it's business hours
         is_business_hours = False
-        day_of_week = now.weekday()  # 0=Monday, 6=Sunday
+        day_of_week = now.weekday()
         hour = now.hour
         
-        if day_of_week < 4:  # Monday-Thursday
-            is_business_hours = 8 <= hour < 17  # 8am-5pm
-        elif day_of_week == 4:  # Friday
-            is_business_hours = 8 <= hour < 16  # 8am-4:30pm  
-        elif day_of_week == 5:  # Saturday
-            is_business_hours = 9 <= hour < 12  # 9am-12pm
-        # Sunday = always False (closed)
+        if day_of_week < 4:
+            is_business_hours = 8 <= hour < 17
+        elif day_of_week == 4:
+            is_business_hours = 8 <= hour < 16
+        elif day_of_week == 5:
+            is_business_hours = 9 <= hour < 12
         
         return {
             "current_time": now.isoformat(),
@@ -273,10 +266,7 @@ class SMSTool(BaseTool):
             **kwargs
         )
         
-        # Set client separately (not as Pydantic field)
         self._client = None
-        
-        # Try to import Twilio
         try:
             from twilio.rest import Client
             if self.account_sid and self.auth_token:
@@ -290,13 +280,11 @@ class SMSTool(BaseTool):
             print("⚠️ SMS TOOL: Twilio library not installed, SMS will be simulated")
     
     def _run(self, to_number: str, message: str, payment_link: str = None) -> Dict[str, Any]:
-        """Send SMS with payment link"""
         print(f"📱 SMS TOOL: DETAILED SMS SENDING INFO:")
         print(f"📱 TO NUMBER: {to_number}")
         print(f"📱 MESSAGE: {message}")
         print(f"💳 PAYMENT LINK: {payment_link}")
         
-        # Format the message with payment link if provided
         full_message = message
         if payment_link:
             full_message += f"\n\nComplete your payment: {payment_link}"
@@ -305,16 +293,11 @@ class SMSTool(BaseTool):
         try:
             if self._client and self.phone_number:
                 print(f"📱 SENDING REAL SMS VIA TWILIO...")
-                print(f"📱 FROM: {self.phone_number}")
-                print(f"📱 TO: {to_number}")
-                
-                # Send real SMS via Twilio
                 message_obj = self._client.messages.create(
                     body=full_message,
                     from_=self.phone_number,
                     to=to_number
                 )
-                
                 print(f"🔥🔥🔥 SMS SENT SUCCESSFULLY VIA TWILIO 🔥🔥🔥")
                 print(f"📱 MESSAGE SID: {message_obj.sid}")
                 
@@ -326,7 +309,6 @@ class SMSTool(BaseTool):
                     "payment_link_included": payment_link is not None
                 }
             else:
-                # Simulate SMS sending
                 print(f"⚠️ SIMULATING SMS (Twilio not configured)")
                 print(f"📱 SIMULATED SMS TO: {to_number}")
                 print(f"📱 SIMULATED MESSAGE: {full_message}")
@@ -389,7 +371,8 @@ def _check_transfer_needed_with_office_hours(message: str, data: Dict[str, Any],
     print(f"🏢 Office hours: {is_office_hours}")
     
     message_lower = message.lower()
-    transfer_rules = RulesProcessor().get_rules_for_agent(agent_type)['transfer_rules']
+    rules_processor = RulesProcessor()
+    transfer_rules = rules_processor.get_rules_for_agent(agent_type)['transfer_rules']
 
     if not is_office_hours:
         print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - You will talk, give price and try to make the sale")
@@ -424,9 +407,9 @@ def _check_transfer_needed_with_office_hours(message: str, data: Dict[str, Any],
 def _extract_data(message: str, context: Dict = None) -> Dict[str, Any]:
     data = context.copy() if context else {}
     
-    postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2})', message.upper().replace(' ', ''))
+    postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})', message.upper())
     if postcode_match:
-        data['postcode'] = postcode_match.group(1)
+        data['postcode'] = postcode_match.group(1).replace(' ', '')
         print(f"✅ Extracted postcode: {data['postcode']}")
     
     if 'skip' in message.lower():
@@ -840,8 +823,6 @@ def manage_conversation_context(conversation_id, message, data=None):
 # INITIALIZE SYSTEM
 # ===============================
 def initialize_system():
-    '''Initialize the complete system with all three agents'''
-    
     print("🚀 Initializing WasteKing Multi-Agent System with 4-Step Booking...")
     
     llm = ChatOpenAI(
