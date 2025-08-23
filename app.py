@@ -84,7 +84,7 @@ class RulesProcessor:
             "LOCK_6_NO_OUT_HOURS_TRANSFER": "CARDINAL SIN: NEVER transfer when office closed",
             "LOCK_7_PRICE_THRESHOLDS": "Skip: NO LIMIT, Man&Van: £500+, Grab: £300+",
             "LOCK_8_STORE_ANSWERS": "Don't re-ask for stored information",
-            "LOCK_9_OUT_HOURS_CALLBACK": "Out-of-hours = callback, not transfer",
+            "LOCK_9_OUT_HOURS_CALLBACK": "Out-of-hours = No call back no transfer: take detail try to make the sale give price offer sale",
             "LOCK_10_FOCUS_SALES": "Focus on sales, aim for booking completion",
             "LOCK_11_ANSWER_FIRST": "Answer customer questions FIRST before asking details"
         }
@@ -621,9 +621,9 @@ Make the sale unless office hours + transfer rules require it."""),
         
         message_lower = message.lower()
         
-        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales
+        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales: You will talk, giev  price and try to make the sale, 
         if not is_office_hours:
-            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - Making the sale")
+            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - You will talk, giev  price and try to make the sale")
             return False
         
         # OFFICE HOURS: Check transfer rules
