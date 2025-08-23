@@ -381,11 +381,12 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
                     extracted[key] = context[key]
         
         # Extract postcode
-        postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,4}[A-Z]{0,2})', message.upper())
+        postcode_match = re.search(r'\b([A-Z]{1,2}[0-9]{1,2}[0-9A-Z]?[0-9][A-Z]{2})\b', message.upper())
         if postcode_match:
             postcode = postcode_match.group(1)
             extracted['postcode'] = postcode
             print(f"✅ EXTRACTED POSTCODE: {postcode}")
+
         
         # Extract name
         if 'name is' in message.lower():
