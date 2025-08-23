@@ -441,8 +441,15 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
     def _generate_final_quote(self, state: Dict, extracted: Dict, postcode: str, skip_size: str) -> str:
         """Generate final quote with PDF extracted values"""
         # Get base price from API (not hardcoded)
-        pricing_result = self._get_pricing(postcode, 'skip', skip_size)
-        base_price = float(pricing_result.get('price', 0))
+
+        # get the price string from the dict first
+        price_str = str(pricing_result.get('price', 0))
+        
+        # clean it up
+        price_clean = price_str.replace("£", "").replace(",", "").strip()
+        
+        # convert to float
+        base_price = float(price_clean)
         
         if base_price == 0:
             return "Let me get you a price quote. What's your postcode?"
