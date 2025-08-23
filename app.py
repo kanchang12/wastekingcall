@@ -695,13 +695,20 @@ class SkipHireAgent:
         
         current_step = _determine_step(combined_data, message)
         
-        if current_step == 'price':
-            response = _get_pricing(combined_data, self.tools)
-        elif current_step == 'booking':
-            response = _create_booking_with_payment_and_sms(self, combined_data)
+        if current_step == 'price' or current_step == 'booking':
+            response = _create_booking_and_get_price(combined_data, self.tools)
         else:
-            response = "What's your name?"
-            # Add logic for other steps
+            if not combined_data.get('firstName'):
+                response = "What's your name?"
+            elif not combined_data.get('postcode'):
+                response = "What's your postcode?"
+            elif len(combined_data.get('postcode', '')) < 5:
+                response = "Could you please provide the full postcode?"
+            elif not combined_data.get('service'):
+                response = "What service do you need?"
+            # Add logic for other steps here as needed
+            else:
+                response = "I have all the information I need, would you like to proceed with the booking?"
             
         _save_state(conversation_id, combined_data)
         return response
@@ -738,13 +745,20 @@ class ManAndVanAgent:
         
         current_step = _determine_step(combined_data, message)
         
-        if current_step == 'price':
-            response = _get_pricing(combined_data, self.tools)
-        elif current_step == 'booking':
-            response = _create_booking_with_payment_and_sms(self, combined_data)
+        if current_step == 'price' or current_step == 'booking':
+            response = _create_booking_and_get_price(combined_data, self.tools)
         else:
-            response = "What's your name?"
-            # Add logic for other steps
+            if not combined_data.get('firstName'):
+                response = "What's your name?"
+            elif not combined_data.get('postcode'):
+                response = "What's your postcode?"
+            elif len(combined_data.get('postcode', '')) < 5:
+                response = "Could you please provide the full postcode?"
+            elif not combined_data.get('service'):
+                response = "What service do you need?"
+            # Add logic for other steps here as needed
+            else:
+                response = "I have all the information I need, would you like to proceed with the booking?"
             
         _save_state(conversation_id, combined_data)
         return response
@@ -781,13 +795,20 @@ class GrabHireAgent:
         
         current_step = _determine_step(combined_data, message)
         
-        if current_step == 'price':
-            response = _get_pricing(combined_data, self.tools)
-        elif current_step == 'booking':
-            response = _create_booking_with_payment_and_sms(self, combined_data)
+        if current_step == 'price' or current_step == 'booking':
+            response = _create_booking_and_get_price(combined_data, self.tools)
         else:
-            response = "What's your name?"
-            # Add logic for other steps
+            if not combined_data.get('firstName'):
+                response = "What's your name?"
+            elif not combined_data.get('postcode'):
+                response = "What's your postcode?"
+            elif len(combined_data.get('postcode', '')) < 5:
+                response = "Could you please provide the full postcode?"
+            elif not combined_data.get('service'):
+                response = "What service do you need?"
+            # Add logic for other steps here as needed
+            else:
+                response = "I have all the information I need, would you like to proceed with the booking?"
             
         _save_state(conversation_id, combined_data)
         return response
