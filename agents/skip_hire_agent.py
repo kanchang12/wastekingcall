@@ -125,16 +125,29 @@ If customer needs different service, transfer back to orchestrator with: TRANSFE
         return response
     
     def _check_transfer_needed_with_rules(self, message: str, data: Dict[str, Any]) -> bool:
-        message_lower = message.lower()
+        """Check PDF rules - only transfer if PDF specifically requires it, otherwise make the sale"""
         
-        # Check if message contains items that should go to other services based on PDF rules
-        if any(word in message_lower for word in ['grab', 'grab hire']):
-            print("🔄 SKIP AGENT: Transfer needed - grab hire mentioned")
-            return True
-        if any(word in message_lower for word in ['man and van', 'mav', 'furniture']):
-            print("🔄 SKIP AGENT: Transfer needed - man & van mentioned")
-            return True
-            
+        print(f"📖 SKIP AGENT: Checking PDF rules for transfer decision")
+        print(f"📖 PDF RULES CONTENT: {self.pdf_rules[:500]}...")  # Show first 500 chars
+        
+        message_lower = message.lower()
+        rules_lower = self.pdf_rules.lower()
+        
+        # Check PDF rules for specific transfer requirements
+        # Only transfer if PDF specifically says skip can't handle this
+        
+        # Look for heavy materials that PDF says skip can't handle
+        heavy_materials = ['soil', 'concrete', 'rubble', 'brick', 'sand', 'stone']
+        has_heavy = any(material in message_lower for material in heavy_materials)
+        
+        if has_heavy and 'skip' in rules_lower and 'heavy' in rules_lower:
+            # Check if PDF specifically says skip can't handle heavy materials
+            if 'skip' in rules_lower and 'cannot' in rules_lower and 'heavy' in rules_lower:
+                print(f"🔄 SKIP AGENT: PDF rules require transfer for heavy materials")
+                return True
+        
+        # Unless PDF specifically requires transfer, try to make the sale
+        print(f"💰 SKIP AGENT: PDF allows skip service - making the sale")
         return False
     
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
