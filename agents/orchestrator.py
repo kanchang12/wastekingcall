@@ -15,7 +15,7 @@ class AgentOrchestrator:
     def __init__(self, llm, agents):
         self.llm = llm
         self.agents = agents
-        self.koyeb_url = "https://your-koyeb-app-url"  # replace with your Koyeb app URL
+        self.koyeb_url = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app"
         global _GLOBAL_CONVERSATION_STATES
         self.conversation_states = _GLOBAL_CONVERSATION_STATES
         print("✅ FIXED AgentOrchestrator: 24/7 pricing + booking")
@@ -53,20 +53,18 @@ class AgentOrchestrator:
         response = ""
         
         # PRIORITY 1: INSTANT PRICING (only needs postcode + size)
-        if (wants_price or not firstName) and postcode and skip_size:
+        if wants_price and postcode and skip_size:
             print(f"💰 Getting pricing for {skip_size} skip")
                 
             pricing_result = self._get_pricing(postcode, service, skip_size)
+            print(f"🔥 API RESPONSE: {pricing_result}")  # Debug what we get back
             
-            if pricing_result.get('success', True):  # assume success if no success key
-                price = pricing_result.get('price', 'unavailable')
-                response = f"💰 Price for {skip_size} skip at {postcode}: £{price}"
-                
-                # Ask for booking
-                response += f"\n\n📋 Ready to book? Just need your name and phone number."
-                
-            else:
-                response = f"Let me check pricing for {postcode} and get back to you with options."
+            # Just show the price regardless of success field
+            price = pricing_result.get('price', pricing_result.get('cost', 'unavailable'))
+            response = f"💰 Price for {skip_size} skip at {postcode}: £{price}"
+            
+            # Ask for booking
+            response += f"\n\n📋 Ready to book? Just need your name and phone number."
                 
             conversation_state['has_pricing'] = True
         
@@ -142,19 +140,20 @@ class AgentOrchestrator:
                 if context.get(key):
                     extracted[key] = context[key]
         
-        # Extract postcode (FULL UK postcodes only, no spaces)
-        postcode_patterns = [
-            r'\b([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})\b',  # Full UK postcode like LS14ED, M11AB
-            r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?\s+[0-9][A-Z]{2})',  # With space, will remove space
-        ]
+        # Extract postcode (SIMPLE and BROAD)
+        postcode_match = re.search(r'([A-Z]{1,2}[0-9]{1,4}[A-Z]{0,2})', message.upper())
+        if postcode_match:
+            postcode = postcode_match.group(1)
+            extracted['postcode'] = postcode
+            print(f"✅ EXTRACTED POSTCODE: {postcode}")
         
-        for pattern in postcode_patterns:
-            match = re.search(pattern, message.upper())
-            if match:
-                postcode = match.group(1).replace(' ', '')
-                extracted['postcode'] = postcode
-                print(f"✅ EXTRACTED POSTCODE: {postcode}")
-                break
+        # Also check for "LS1" style partial codes if customer says that's the postcode
+        if not postcode_match and ('postcode' in message.lower() or 'LS' in message.upper() or 'M1' in message.upper()):
+            partial_match = re.search(r'([A-Z]{1,2}[0-9]{1,2})', message.upper())
+            if partial_match:
+                postcode = partial_match.group(1)
+                extracted['postcode'] = postcode  
+                print(f"✅ EXTRACTED PARTIAL POSTCODE: {postcode}")
         
         # Extract name (simple and direct)
         if 'name is' in message.lower():
