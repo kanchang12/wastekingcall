@@ -222,6 +222,13 @@ class SMPAPITool(BaseTool):
     def _create_booking_ref(self, **kwargs) -> Dict[str, Any]:
         """STEP 1: Create booking reference"""
         print(f"📋 STEP 1: Creating booking reference...")
+        print(f"🔥 BOOKING REF PAYLOAD:")
+        print(f"    firstName: {kwargs.get('firstName')}")
+        print(f"    phone: {kwargs.get('phone')}")
+        print(f"    postcode: {kwargs.get('postcode')}")
+        print(f"    service: {kwargs.get('service')}")
+        print(f"    type: {kwargs.get('type')}")
+        
         url = f"{self.koyeb_url}/api/wasteking-create-booking-ref"
         payload = {
             "firstName": kwargs.get('firstName'),
@@ -231,11 +238,25 @@ class SMPAPITool(BaseTool):
             "type": kwargs.get('type')
         }
         print(f"🔥 CREATE BOOKING REF CALL: {payload}")
-        return self._send_koyeb_webhook(url, payload, method="POST")
+        result = self._send_koyeb_webhook(url, payload, method="POST")
+        
+        if result.get('success'):
+            booking_ref = result.get('booking_ref')
+            print(f"🔥🔥🔥 BOOKING REF CREATED: {booking_ref} 🔥🔥🔥")
+        else:
+            print(f"❌ BOOKING REF FAILED: {result}")
+        
+        return result
     
     def _get_price_with_booking_ref(self, **kwargs) -> Dict[str, Any]:
         """STEP 2: Get price using booking reference"""
         print(f"💰 STEP 2: Getting price with booking reference...")
+        print(f"🔥 PRICE WITH REF PAYLOAD:")
+        print(f"    booking_ref: {kwargs.get('booking_ref')}")
+        print(f"    postcode: {kwargs.get('postcode')}")
+        print(f"    service: {kwargs.get('service')}")
+        print(f"    type: {kwargs.get('type')}")
+        
         url = f"{self.koyeb_url}/api/wasteking-get-price-with-ref"
         payload = {
             "booking_ref": kwargs.get('booking_ref'),
@@ -244,11 +265,24 @@ class SMPAPITool(BaseTool):
             "type": kwargs.get('type')
         }
         print(f"🔥 GET PRICE WITH REF CALL: {payload}")
-        return self._send_koyeb_webhook(url, payload, method="POST")
+        result = self._send_koyeb_webhook(url, payload, method="POST")
+        
+        if result.get('success'):
+            price = result.get('price', 'N/A')
+            print(f"🔥🔥🔥 PRICE WITH REF SUCCESS: {price} 🔥🔥🔥")
+        else:
+            print(f"❌ PRICE WITH REF FAILED: {result}")
+        
+        return result
     
     def _create_payment_link(self, **kwargs) -> Dict[str, Any]:
         """STEP 3: Create payment link"""
         print(f"💳 STEP 3: Creating payment link...")
+        print(f"🔥 PAYMENT LINK PAYLOAD:")
+        print(f"    booking_ref: {kwargs.get('booking_ref')}")
+        print(f"    amount: {kwargs.get('amount')}")
+        print(f"    customer_phone: {kwargs.get('customer_phone')}")
+        
         url = f"{self.koyeb_url}/api/wasteking-create-payment-link"
         payload = {
             "booking_ref": kwargs.get('booking_ref'),
@@ -256,15 +290,36 @@ class SMPAPITool(BaseTool):
             "customer_phone": kwargs.get('customer_phone')
         }
         print(f"🔥 CREATE PAYMENT LINK CALL: {payload}")
-        return self._send_koyeb_webhook(url, payload, method="POST")
+        result = self._send_koyeb_webhook(url, payload, method="POST")
+        
+        if result.get('success'):
+            payment_link = result.get('payment_link')
+            print(f"🔥🔥🔥 PAYMENT LINK CREATED: {payment_link} 🔥🔥🔥")
+        else:
+            print(f"❌ PAYMENT LINK FAILED: {result}")
+        
+        return result
 
     # LEGACY METHODS (KEEP FOR COMPATIBILITY)
     def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
         """Legacy pricing - always available"""
+        print(f"🔥 LEGACY PRICING STRUCTURE:")
+        print(f"    postcode: {postcode}")
+        print(f"    service: {service}")
+        print(f"    type: {type}")
+        
         url = f"{self.koyeb_url}/api/wasteking-get-price"
         payload = {"postcode": postcode, "service": service, "type": type}
         print(f"🔥 LEGACY PRICING CALL: {payload}")
-        return self._send_koyeb_webhook(url, payload, method="POST")
+        result = self._send_koyeb_webhook(url, payload, method="POST")
+        
+        if result.get('success'):
+            price = result.get('price', result.get('service_price', 'N/A'))
+            print(f"🔥🔥🔥 PRICING SUCCESS: {price} 🔥🔥🔥")
+        else:
+            print(f"❌ PRICING FAILED: {result}")
+        
+        return result
 
     def _create_booking_quote(self, **kwargs) -> Dict[str, Any]:
         """Legacy booking quote function"""
@@ -426,24 +481,32 @@ class SMSTool(BaseTool):
     
     def _run(self, to_number: str, message: str, payment_link: str = None) -> Dict[str, Any]:
         """Send SMS with payment link"""
-        print(f"📱 SMS TOOL: Sending to {to_number}")
-        print(f"📱 Message: {message}")
-        if payment_link:
-            print(f"💳 Payment Link: {payment_link}")
+        print(f"📱 SMS TOOL: DETAILED SMS SENDING INFO:")
+        print(f"📱 TO NUMBER: {to_number}")
+        print(f"📱 MESSAGE: {message}")
+        print(f"💳 PAYMENT LINK: {payment_link}")
         
         # Format the message with payment link if provided
         full_message = message
         if payment_link:
             full_message += f"\n\nComplete your payment: {payment_link}"
+            print(f"📱 FULL SMS MESSAGE: {full_message}")
         
         try:
             if self._client and self.phone_number:
+                print(f"📱 SENDING REAL SMS VIA TWILIO...")
+                print(f"📱 FROM: {self.phone_number}")
+                print(f"📱 TO: {to_number}")
+                
                 # Send real SMS via Twilio
                 message_obj = self._client.messages.create(
                     body=full_message,
                     from_=self.phone_number,
                     to=to_number
                 )
+                
+                print(f"🔥🔥🔥 SMS SENT SUCCESSFULLY VIA TWILIO 🔥🔥🔥")
+                print(f"📱 MESSAGE SID: {message_obj.sid}")
                 
                 return {
                     "success": True,
@@ -454,8 +517,9 @@ class SMSTool(BaseTool):
                 }
             else:
                 # Simulate SMS sending
+                print(f"⚠️ SIMULATING SMS (Twilio not configured)")
                 print(f"📱 SIMULATED SMS TO: {to_number}")
-                print(f"📱 FULL MESSAGE: {full_message}")
+                print(f"📱 SIMULATED MESSAGE: {full_message}")
                 
                 return {
                     "success": True,
@@ -588,6 +652,13 @@ Make the sale unless office hours + transfer rules require it."""),
         
         current_step = self._determine_step(combined_data, message)
         print(f"👣 SKIP AGENT: Current step: {current_step}")
+        print(f"🔍 SKIP AGENT: Step determination logic:")
+        print(f"    Has service: {bool(combined_data.get('service'))}")
+        print(f"    Has type: {bool(combined_data.get('type'))}")
+        print(f"    Has postcode: {bool(combined_data.get('postcode'))}")
+        print(f"    Has firstName: {bool(combined_data.get('firstName'))}")
+        print(f"    Has phone: {bool(combined_data.get('phone'))}")
+        print(f"    Has pricing: {bool(combined_data.get('has_pricing'))}")
         
         response = ""
         
@@ -614,6 +685,7 @@ Make the sale unless office hours + transfer rules require it."""),
         elif current_step == 'date' and not combined_data.get('preferred_date'):
             response = "When would you like delivery?"
         elif current_step == 'booking':
+            print(f"🔥🔥🔥 SKIP AGENT: PROCEEDING TO BOOKING STEP 🔥🔥🔥")
             # IMPORTANT: Keep your conditional logic
             if combined_data.get('has_booking'):
                 response = self._create_booking_with_payment_and_sms(combined_data)
@@ -701,20 +773,25 @@ Make the sale unless office hours + transfer rules require it."""),
             data['service'] = 'skip'
             print(f"✅ SKIP AGENT: Extracted service: skip")
             
-            if any(size in message.lower() for size in ['8-yard', '8 yard', '8yd', '8 yd']):
+            # Enhanced type extraction for Skip Hire with defaults - IMPROVED PATTERN MATCHING
+            if any(size in message.lower() for size in ['8-yard', '8 yard', '8yd', '8 yd', 'eight-yard', 'eight yard', 'eight yd']):
                 data['type'] = '8yd'
                 print(f"✅ SKIP AGENT: Extracted type: 8yd")
-            elif any(size in message.lower() for size in ['6-yard', '6 yard', '6yd', '6 yd']):
+            elif any(size in message.lower() for size in ['6-yard', '6 yard', '6yd', '6 yd', 'six-yard', 'six yard', 'six yd']):
                 data['type'] = '6yd'
                 print(f"✅ SKIP AGENT: Extracted type: 6yd")
-            elif any(size in message.lower() for size in ['4-yard', '4 yard', '4yd', '4 yd']):
+            elif any(size in message.lower() for size in ['4-yard', '4 yard', '4yd', '4 yd', 'four-yard', 'four yard', 'four yd']):
                 data['type'] = '4yd'
                 print(f"✅ SKIP AGENT: Extracted type: 4yd")
-            elif any(size in message.lower() for size in ['12-yard', '12 yard', '12yd', '12 yd']):
+            elif any(size in message.lower() for size in ['12-yard', '12 yard', '12yd', '12 yd', 'twelve-yard', 'twelve yard', 'twelve yd']):
                 data['type'] = '12yd'
                 print(f"✅ SKIP AGENT: Extracted type: 12yd")
+            else:
+                # DEFAULT: Set 8yd as default type for Skip Hire
+                data['type'] = '8yd'
+                print(f"✅ SKIP AGENT: Set default type: 8yd")
         
-        if 'kanchen ghosh' in message.lower():
+        if 'kanchen ghosh' in message.lower() or 'kanchen' in message.lower():
             data['firstName'] = 'Kanchen Ghosh'
             print(f"✅ SKIP AGENT: Extracted firstName: Kanchen Ghosh")
         else:
@@ -728,7 +805,7 @@ Make the sale unless office hours + transfer rules require it."""),
             data['phone'] = phone_match.group(1)
             print(f"✅ SKIP AGENT: Extracted phone: {data['phone']}")
         
-        waste_types = ['building waste', 'construction', 'garden waste', 'household', 'general waste']
+        waste_types = ['building waste', 'construction', 'garden waste', 'household', 'general waste', 'bricks', 'mortar']
         for waste_type in waste_types:
             if waste_type in message.lower():
                 data['waste_type'] = waste_type
@@ -752,20 +829,26 @@ Make the sale unless office hours + transfer rules require it."""),
         
         message_lower = message.lower()
         
-        price_request = any(word in message_lower for word in ['price', 'availability', 'cost', 'quote', 'confirm price'])
+        price_request = any(word in message_lower for word in ['price', 'availability', 'cost', 'quote', 'confirm price', 'total price', 'including vat'])
         has_required = data.get('service') and data.get('type') and data.get('postcode')
         
         if price_request and has_required and not data.get('has_pricing'):
             print(f"💰 SKIP AGENT: Customer requests price and has required data - going to pricing")
             return 'price'
         
-        # Check for booking confirmation
-        booking_request = any(word in message_lower for word in ['book', 'booking', 'confirm booking', 'yes', 'proceed'])
+        # ENHANCED: Check for booking confirmation - more patterns
+        booking_request = any(word in message_lower for word in [
+            'book', 'booking', 'confirm booking', 'yes', 'proceed', 
+            'confirm the booking', 'booking reference', 'reference number', 
+            'can you confirm', 'please confirm'
+        ])
         has_all_data = (data.get('service') and data.get('type') and data.get('postcode') and 
-                       data.get('firstName') and data.get('phone') and data.get('has_pricing'))
+                       data.get('firstName') and data.get('phone'))
         
+        # CRITICAL: If customer asks for booking confirmation and we have all data, proceed to booking
         if booking_request and has_all_data:
             print(f"📋 SKIP AGENT: Customer requests booking and has all data - going to booking")
+            print(f"📋 SKIP AGENT: Data check - Service: {data.get('service')}, Type: {data.get('type')}, Postcode: {data.get('postcode')}, Name: {data.get('firstName')}, Phone: {data.get('phone')}")
             return 'booking'
         
         if not data.get('firstName'): return 'name'
@@ -781,9 +864,10 @@ Make the sale unless office hours + transfer rules require it."""),
     
     def _get_pricing(self, data: Dict[str, Any]) -> str:
         print(f"💰 SKIP AGENT: CALLING PRICING TOOL")
-        print(f"    postcode: {data.get('postcode')}")
-        print(f"    service: {data.get('service')}")
-        print(f"    type: {data.get('type')}")
+        print(f"🔥 PRICING STRUCTURE:")
+        print(f"    Postcode: {data.get('postcode')}")
+        print(f"    Service: {data.get('service')}")
+        print(f"    Type: {data.get('type')}")
         
         try:
             smp_tool = None
@@ -806,10 +890,20 @@ Make the sale unless office hours + transfer rules require it."""),
             print(f"💰 SKIP AGENT: PRICING RESULT: {json.dumps(result, indent=2)}")
             
             if result.get('success'):
-                price = result.get('price', result.get('cost', 'N/A'))
+                # Extract price - handle different formats
+                price = result.get('price', result.get('cost', result.get('service_price', 'N/A')))
+                
+                # Clean price format - remove double £ symbols
+                if isinstance(price, str):
+                    price = price.replace('££', '£').replace('£', '').strip()
+                    if not price.startswith('£'):
+                        price = f"£{price}"
+                
+                print(f"🔥🔥🔥 PRICING SUCCESS: EXTRACTED PRICE = {price} 🔥🔥🔥")
+                
                 data['has_pricing'] = True
                 data['price'] = price
-                return f"💰 {data.get('type')} skip hire at {data.get('postcode')}: £{price}. Would you like to book this?"
+                return f"💰 {data.get('type')} skip hire at {data.get('postcode')}: {price}. Would you like to book this?"
             else:
                 error = result.get('error', 'pricing failed')
                 print(f"❌ SKIP AGENT: Pricing error: {error}")
@@ -820,9 +914,15 @@ Make the sale unless office hours + transfer rules require it."""),
             return f"Error getting pricing: {str(e)}"
     
     def _create_booking_with_payment_and_sms(self, data: Dict[str, Any]) -> str:
-        """NEW 3-STEP BOOKING PROCESS"""
+        """NEW 3-STEP BOOKING PROCESS WITH CONSOLE PRINTS"""
         
-        print(f"📋 SKIP AGENT: 3-STEP BOOKING PROCESS STARTED")
+        print(f"🔥🔥🔥 SKIP AGENT: 3-STEP BOOKING PROCESS STARTED 🔥🔥🔥")
+        print(f"📋 BOOKING DATA CHECK:")
+        print(f"    Service: {data.get('service')}")
+        print(f"    Type: {data.get('type')}")
+        print(f"    Postcode: {data.get('postcode')}")
+        print(f"    Name: {data.get('firstName')}")
+        print(f"    Phone: {data.get('phone')}")
         print(f"    Step 1: Create booking reference")
         print(f"    Step 2: Get price with booking reference")
         print(f"    Step 3: Create payment link")
@@ -840,6 +940,7 @@ Make the sale unless office hours + transfer rules require it."""),
                         sms_tool = tool
             
             if not smp_tool:
+                print("❌ BOOKING FAILED: SMPAPITool not found")
                 return "Booking tool not available"
             
             # STEP 1: CREATE BOOKING REF
@@ -854,10 +955,11 @@ Make the sale unless office hours + transfer rules require it."""),
             )
             
             if not booking_ref_result.get('success'):
+                print(f"❌ STEP 1 FAILED: {booking_ref_result.get('error')}")
                 return f"Failed to create booking reference: {booking_ref_result.get('error')}"
             
             booking_ref = booking_ref_result.get('booking_ref')
-            print(f"✅ STEP 1: Got booking_ref: {booking_ref}")
+            print(f"🔥🔥🔥 STEP 1 SUCCESS: BOOKING REFERENCE = {booking_ref} 🔥🔥🔥")
             
             # STEP 2: GET PRICE USING BOOKING_REF
             print(f"🔄 STEP 2: Getting price using booking_ref...")
@@ -870,10 +972,11 @@ Make the sale unless office hours + transfer rules require it."""),
             )
             
             if not pricing_result.get('success'):
+                print(f"❌ STEP 2 FAILED: {pricing_result.get('error')}")
                 return f"Failed to get pricing: {pricing_result.get('error')}"
             
             price = pricing_result.get('price')
-            print(f"✅ STEP 2: Got price: £{price}")
+            print(f"🔥🔥🔥 STEP 2 SUCCESS: PRICE = £{price} 🔥🔥🔥")
             
             # STEP 3: CREATE PAYMENT LINK
             print(f"🔄 STEP 3: Creating payment link...")
@@ -885,36 +988,44 @@ Make the sale unless office hours + transfer rules require it."""),
             )
             
             if not payment_result.get('success'):
+                print(f"❌ STEP 3 FAILED: {payment_result.get('error')}")
                 return f"Failed to create payment link: {payment_result.get('error')}"
             
             payment_link = payment_result.get('payment_link')
-            print(f"✅ STEP 3: Got payment link: {payment_link}")
+            print(f"🔥🔥🔥 STEP 3 SUCCESS: PAYMENT LINK = {payment_link} 🔥🔥🔥")
             
             # STEP 4: SEND SMS VIA TWILIO
             print(f"🔄 STEP 4: Sending SMS via Twilio...")
             sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} skip booking is confirmed! Ref: {booking_ref}, Price: £{price}"
             
             if sms_tool:
+                print(f"📱 SMS MESSAGE: {sms_message}")
+                print(f"📱 SENDING TO: {data.get('phone')}")
+                print(f"💳 PAYMENT LINK: {payment_link}")
+                
                 sms_result = sms_tool._run(
                     to_number=data.get('phone'),
                     message=sms_message,
                     payment_link=payment_link
                 )
                 
+                print(f"📱 SMS RESULT: {json.dumps(sms_result, indent=2)}")
+                
                 if sms_result.get('success'):
-                    print(f"✅ STEP 4: SMS sent successfully")
+                    print(f"🔥🔥🔥 STEP 4 SUCCESS: SMS SENT SUCCESSFULLY 🔥🔥🔥")
                     data['has_booking'] = True
                     return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {data.get('phone')} via SMS."
                 else:
-                    print(f"❌ STEP 4: SMS failed: {sms_result.get('error')}")
+                    print(f"❌ STEP 4 FAILED: SMS sending failed: {sms_result.get('error')}")
                     data['has_booking'] = True
                     return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
             else:
+                print(f"⚠️ SMS TOOL NOT FOUND - Booking created but no SMS sent")
                 data['has_booking'] = True
                 return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
                 
         except Exception as e:
-            print(f"❌ SKIP AGENT: BOOKING EXCEPTION: {str(e)}")
+            print(f"❌ CRITICAL ERROR IN BOOKING PROCESS: {str(e)}")
             return f"Error creating booking: {str(e)}"
     
     def _call_supplier_if_needed(self, booking_result: Dict[str, Any], customer_data: Dict[str, Any]):
@@ -1114,10 +1225,11 @@ NEVER mention callbacks or office hours to customers. Make the sale."""),
             data['postcode'] = postcode_match.group(1)
             print(f"✅ MAV AGENT: Extracted postcode: {data['postcode']}")
         
-        if any(word in message.lower() for word in ['man and van', 'mav', 'man & van']):
+        if any(word in message.lower() for word in ['man and van', 'mav', 'man & van', 'van']):
             data['service'] = 'mav'
             print(f"✅ MAV AGENT: Extracted service: mav")
             
+            # Enhanced type extraction for MAV - handle cubic yards and set default
             if any(size in message.lower() for size in ['small', 'small van']):
                 data['type'] = 'small'
                 print(f"✅ MAV AGENT: Extracted type: small")
@@ -1127,6 +1239,19 @@ NEVER mention callbacks or office hours to customers. Make the sale."""),
             elif any(size in message.lower() for size in ['large', 'large van']):
                 data['type'] = 'large'
                 print(f"✅ MAV AGENT: Extracted type: large")
+            elif any(size in message.lower() for size in ['4 cubic', '4 yard', '4-yard', '4yd']):
+                data['type'] = 'small'  # 4 cubic yards = small van
+                print(f"✅ MAV AGENT: Extracted type: small (from 4 cubic yards)")
+            elif any(size in message.lower() for size in ['6 cubic', '6 yard', '6-yard', '6yd']):
+                data['type'] = 'medium'  # 6 cubic yards = medium van
+                print(f"✅ MAV AGENT: Extracted type: medium (from 6 cubic yards)")
+            elif any(size in message.lower() for size in ['8 cubic', '8 yard', '8-yard', '8yd']):
+                data['type'] = 'large'  # 8 cubic yards = large van
+                print(f"✅ MAV AGENT: Extracted type: large (from 8 cubic yards)")
+            else:
+                # DEFAULT: Set small as default type for MAV
+                data['type'] = 'small'
+                print(f"✅ MAV AGENT: Set default type: small")
         
         if 'kanchen ghosh' in message.lower():
             data['firstName'] = 'Kanchen Ghosh'
@@ -1496,12 +1621,17 @@ NEVER mention callbacks or office hours to customers. Make the sale."""),
             data['service'] = 'grab'
             print(f"✅ GRAB AGENT: Extracted service: grab")
             
+            # Enhanced type extraction for Grab Hire with defaults
             if any(size in message.lower() for size in ['6-tonne', '6 tonne', '6t']):
                 data['type'] = '6t'
                 print(f"✅ GRAB AGENT: Extracted type: 6t")
             elif any(size in message.lower() for size in ['8-tonne', '8 tonne', '8t']):
                 data['type'] = '8t'
                 print(f"✅ GRAB AGENT: Extracted type: 8t")
+            else:
+                # DEFAULT: Set 6t as default type for Grab Hire
+                data['type'] = '6t'
+                print(f"✅ GRAB AGENT: Set default type: 6t")
         
         if 'kanchen ghosh' in message.lower():
             data['firstName'] = 'Kanchen Ghosh'
@@ -1685,7 +1815,7 @@ NEVER mention callbacks or office hours to customers. Make the sale."""),
 conversation_contexts = {}
 
 def manage_conversation_context(conversation_id, message, data=None):
-    """Manage conversation context to prevent data contamination"""
+    """Manage conversation context to prevent data contamination and preserve service routing"""
     global conversation_contexts
     
     if conversation_id not in conversation_contexts:
@@ -1693,18 +1823,36 @@ def manage_conversation_context(conversation_id, message, data=None):
     
     context = conversation_contexts[conversation_id]
     
+    # Extract and preserve postcode
     postcode_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b', message.upper())
     if postcode_match:
         new_postcode = postcode_match.group(1).replace(' ', '')
         if context.get('postcode') and context['postcode'] != new_postcode:
             print(f"🔄 NEW POSTCODE DETECTED: {new_postcode} (clearing old: {context['postcode']})")
+            # Keep service but update postcode
+            service = context.get('service')
             conversation_contexts[conversation_id] = {'postcode': new_postcode}
+            if service:
+                conversation_contexts[conversation_id]['service'] = service
         else:
             context['postcode'] = new_postcode
+    
+    # Extract and preserve service type from message
+    message_lower = message.lower()
+    if any(word in message_lower for word in ['man and van', 'mav', 'man & van', 'van collection', 'small van', 'medium van', 'large van']):
+        context['service'] = 'mav'
+        print(f"🔄 SERVICE DETECTED: mav")
+    elif any(word in message_lower for word in ['skip hire', 'skip', 'yard skip', 'cubic yard skip']):
+        context['service'] = 'skip'
+        print(f"🔄 SERVICE DETECTED: skip")
+    elif any(word in message_lower for word in ['grab', 'grab hire', 'tonne']):
+        context['service'] = 'grab'
+        print(f"🔄 SERVICE DETECTED: grab")
     
     if data:
         context.update(data)
     
+    # Cleanup old conversations
     if len(conversation_contexts) > 20:
         oldest_key = next(iter(conversation_contexts))
         del conversation_contexts[oldest_key]
@@ -1845,19 +1993,31 @@ def process_customer_message():
         
         context['conversation_id'] = conversation_id
         
-        # Route to appropriate agent
+        # Route to appropriate agent - IMPROVED ROUTING LOGIC
         message_lower = customer_message.lower()
         
-        if any(word in message_lower for word in ['man and van', 'mav', 'man & van']):
+        # Priority routing - check for explicit service mentions
+        if any(word in message_lower for word in ['man and van', 'mav', 'man & van', 'van collection', 'small van', 'medium van', 'large van']):
             print("Routing to Man & Van agent...")
             response = system['mav_agent'].process_message(customer_message, context)
-        elif any(word in message_lower for word in ['grab', 'grab hire']) or \
-             not any(word in message_lower for word in ['skip', 'man and van', 'mav']):
+        elif any(word in message_lower for word in ['skip hire', 'skip', 'yard skip', 'cubic yard skip']):
+            print("Routing to Skip agent...")
+            response = system['skip_agent'].process_message(customer_message, context)
+        elif any(word in message_lower for word in ['grab', 'grab hire', 'tonne', '6t', '8t']):
             print("Routing to Grab Hire agent...")
             response = system['grab_agent'].process_message(customer_message, context)
         else:
-            print("Routing to Skip agent...")
-            response = system['skip_agent'].process_message(customer_message, context)
+            # Default routing based on existing context or fallback to Skip
+            existing_service = context.get('service')
+            if existing_service == 'mav':
+                print("Routing to Man & Van agent (from context)...")
+                response = system['mav_agent'].process_message(customer_message, context)
+            elif existing_service == 'grab':
+                print("Routing to Grab Hire agent (from context)...")
+                response = system['grab_agent'].process_message(customer_message, context)
+            else:
+                print("Routing to Skip agent (default)...")
+                response = system['skip_agent'].process_message(customer_message, context)
         
         print(f"Agent response: {response}")
         
