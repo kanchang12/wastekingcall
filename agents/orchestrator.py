@@ -63,6 +63,8 @@ Gas cylinders - Hazardous
 Tyres - Cannot be put in skip
 Air Conditioning units - Special disposal
 Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service. We charge extra due to EA regulations"
+IF THE user asks for price : call 
+
 """
             else:
                 return "PDF rules not found"
@@ -263,7 +265,9 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         
         # All info is available, proceed to booking
         state['stage'] = 'A7_QUOTE_PRESENTATION'
-        return "All set! Ready to book?"
+        booking_result = self._create_booking_quote(skip_size, service, postcode, firstName, phone, booking_ref)
+        payment_result = self._send_payment_link(phone, booking_ref, str(final_price))
+        return "All set!"
 
 
     # --- EXISTING HELPER METHODS (UNCHANGED BUT INCLUDED FOR COMPLETENESS) ---
