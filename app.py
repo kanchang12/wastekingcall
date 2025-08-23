@@ -153,11 +153,11 @@ class RulesProcessor:
         return base_rules
 
 # ===============================
-# SMP API TOOL CLASS
+# SMP API TOOL CLASS - UPDATED FOR 3-STEP PROCESS
 # ===============================
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
-    description: str = """WasteKing API for pricing, booking quotes, payment processing, and supplier calling."""
+    description: str = """WasteKing API for 3-step booking: create_booking_ref, get_price_with_booking_ref, create_payment_link"""
     koyeb_url: str = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app"
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
@@ -168,11 +168,20 @@ class SMPAPITool(BaseTool):
         
         try:
             print(f"🔧 SMP API TOOL: Routing to action handler...")
-            if action == "get_pricing":
-                print(f"🔧 SMP API TOOL: Calling _get_pricing()")
+            if action == "create_booking_ref":
+                print(f"🔧 SMP API TOOL: Calling _create_booking_ref()")
+                result = self._create_booking_ref(**kwargs)
+            elif action == "get_price_with_booking_ref":
+                print(f"🔧 SMP API TOOL: Calling _get_price_with_booking_ref()")
+                result = self._get_price_with_booking_ref(**kwargs)
+            elif action == "create_payment_link":
+                print(f"🔧 SMP API TOOL: Calling _create_payment_link()")
+                result = self._create_payment_link(**kwargs)
+            elif action == "get_pricing":
+                print(f"🔧 SMP API TOOL: Calling _get_pricing() (legacy)")
                 result = self._get_pricing(**kwargs)
             elif action == "create_booking_quote":
-                print(f"🔧 SMP API TOOL: Calling _create_booking_quote()")
+                print(f"🔧 SMP API TOOL: Calling _create_booking_quote() (legacy)")
                 result = self._create_booking_quote(**kwargs)
             elif action == "take_payment":
                 print(f"🔧 SMP API TOOL: Calling _take_payment()")
@@ -209,37 +218,63 @@ class SMPAPITool(BaseTool):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
-        """24/7 pricing - always available"""
-        url = f"{self.koyeb_url}/api/wasteking-get-price"
-        payload = {"postcode": postcode, "service": service, "type": type}
-        print(f"🔥 PRICING CALL: {payload}")
+    # NEW 3-STEP BOOKING PROCESS
+    def _create_booking_ref(self, **kwargs) -> Dict[str, Any]:
+        """STEP 1: Create booking reference"""
+        print(f"📋 STEP 1: Creating booking reference...")
+        url = f"{self.koyeb_url}/api/wasteking-create-booking-ref"
+        payload = {
+            "firstName": kwargs.get('firstName'),
+            "phone": kwargs.get('phone'),
+            "postcode": kwargs.get('postcode'),
+            "service": kwargs.get('service'),
+            "type": kwargs.get('type')
+        }
+        print(f"🔥 CREATE BOOKING REF CALL: {payload}")
+        return self._send_koyeb_webhook(url, payload, method="POST")
+    
+    def _get_price_with_booking_ref(self, **kwargs) -> Dict[str, Any]:
+        """STEP 2: Get price using booking reference"""
+        print(f"💰 STEP 2: Getting price with booking reference...")
+        url = f"{self.koyeb_url}/api/wasteking-get-price-with-ref"
+        payload = {
+            "booking_ref": kwargs.get('booking_ref'),
+            "postcode": kwargs.get('postcode'),
+            "service": kwargs.get('service'),
+            "type": kwargs.get('type')
+        }
+        print(f"🔥 GET PRICE WITH REF CALL: {payload}")
+        return self._send_koyeb_webhook(url, payload, method="POST")
+    
+    def _create_payment_link(self, **kwargs) -> Dict[str, Any]:
+        """STEP 3: Create payment link"""
+        print(f"💳 STEP 3: Creating payment link...")
+        url = f"{self.koyeb_url}/api/wasteking-create-payment-link"
+        payload = {
+            "booking_ref": kwargs.get('booking_ref'),
+            "amount": kwargs.get('amount'),
+            "customer_phone": kwargs.get('customer_phone')
+        }
+        print(f"🔥 CREATE PAYMENT LINK CALL: {payload}")
         return self._send_koyeb_webhook(url, payload, method="POST")
 
-    # COMMENTED OUT OLD VERSION - KEEPING FOR REFERENCE
-    # def _create_booking_quote(self, type: str, service: str, postcode: str, firstName: str, phone: str, booking_ref: str) -> Dict[str, Any]:
-    #     """24/7 booking - always available"""
-    #     url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
-    #     payload = {
-    #         "booking_ref": booking_ref,
-    #         "postcode": postcode,
-    #         "service": service,
-    #         "type": type,
-    #         "firstName": firstName,
-    #         "phone": phone
-    #     }
-    #     print(f"🔥 BOOKING CALL: {payload}")
-    #     return self._send_koyeb_webhook(url, payload, method="POST")
+    # LEGACY METHODS (KEEP FOR COMPATIBILITY)
+    def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
+        """Legacy pricing - always available"""
+        url = f"{self.koyeb_url}/api/wasteking-get-price"
+        payload = {"postcode": postcode, "service": service, "type": type}
+        print(f"🔥 LEGACY PRICING CALL: {payload}")
+        return self._send_koyeb_webhook(url, payload, method="POST")
 
     def _create_booking_quote(self, **kwargs) -> Dict[str, Any]:
-        """NEW IMPROVED BOOKING QUOTE FUNCTION"""
-        print(f"📋 CREATE_BOOKING_QUOTE:")
+        """Legacy booking quote function"""
+        print(f"📋 LEGACY CREATE_BOOKING_QUOTE:")
         print(f" 👤 Name: {kwargs.get('firstName')}")
         print(f" 📞 Phone: {kwargs.get('phone')}")
         print(f" 📍 Postcode: {kwargs.get('postcode')}")
         print(f" 🚛 Service: {kwargs.get('service')}")
         
-        required = ['postcode', 'service', 'type', 'firstName', 'phone', 'booking_ref']
+        required = ['postcode', 'service', 'type', 'firstName', 'phone']
         for field in required:
             if not kwargs.get(field):
                 return {"success": False, "error": f"Missing: {field}"}
@@ -248,7 +283,6 @@ class SMPAPITool(BaseTool):
         postcode = kwargs['postcode'].upper().replace(" ", "").strip()
         
         data_payload = {
-            "booking_ref": kwargs.get("booking_ref"),
             "postcode": postcode,
             "service": kwargs.get("service"),
             "type": kwargs.get("type"),
@@ -457,21 +491,23 @@ class SkipHireAgent:
             ("system", """You are Skip Hire agent. Follow PDF rules and call datetime first.
 
 OFFICE HOURS RULE:
-- OUT OF HOURS: Handle ALL calls, make sales, NEVER transfer
+- OUT OF HOURS: Handle ALL calls, make sales, complete bookings - NEVER mention office closed or callbacks
 - OFFICE HOURS: Check transfer thresholds (Skip: NO LIMIT, MAV: £500+, Grab: £300+)
 
-BOOKING PROCESS:
+3-STEP BOOKING PROCESS:
 1. Get customer details (name, phone, postcode, service, type)
-2. Get pricing
+2. Get pricing (if needed)
 3. If customer says "yes" or wants to book:
-   - Create booking reference
-   - Create booking quote 
-   - Generate payment link
-   - Send payment link via SMS
+   - Step 1: Create booking reference
+   - Step 2: Get price with booking reference
+   - Step 3: Create payment link
+   - Step 4: Send payment link via SMS
 
 Call tools using exact API format:
 - Pricing: smp_api(action="get_pricing", postcode=X, service="skip", type="8yd")
-- Booking: smp_api(action="create_booking_quote", postcode=X, service="skip", type="8yd", firstName=X, phone=X, booking_ref=X)
+- Step 1: smp_api(action="create_booking_ref", firstName=X, phone=X, postcode=X, service="skip", type="8yd")
+- Step 2: smp_api(action="get_price_with_booking_ref", booking_ref=X, postcode=X, service="skip", type="8yd")
+- Step 3: smp_api(action="create_payment_link", booking_ref=X, amount=X, customer_phone=X)
 - SMS: sms_tool(to_number=X, message=X, payment_link=X)
 
 Make the sale unless office hours + transfer rules require it."""),
@@ -482,7 +518,7 @@ Make the sale unless office hours + transfer rules require it."""),
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
         
-        print("✅ SKIP HIRE AGENT initialized")
+        print("✅ SKIP HIRE AGENT initialized with 3-step booking process")
     
     def _load_pdf_rules_with_cache(self) -> str:
         global _PDF_RULES_CACHE
@@ -570,6 +606,7 @@ Make the sale unless office hours + transfer rules require it."""),
         elif current_step == 'product_specific' and not combined_data.get('product_specific'):
             response = "Any specific requirements?"
         elif current_step == 'price':
+            # IMPORTANT: Keep your conditional logic
             if combined_data.get('has_pricing'):
                 response = self._get_pricing(combined_data)
             else:
@@ -577,7 +614,11 @@ Make the sale unless office hours + transfer rules require it."""),
         elif current_step == 'date' and not combined_data.get('preferred_date'):
             response = "When would you like delivery?"
         elif current_step == 'booking':
-            response = self._create_booking_with_payment_and_sms(combined_data)
+            # IMPORTANT: Keep your conditional logic
+            if combined_data.get('has_booking'):
+                response = self._create_booking_with_payment_and_sms(combined_data)
+            else:
+                response = self._create_booking_with_payment_and_sms(combined_data)
         else:
             response = "What's your name?"
         
@@ -621,9 +662,9 @@ Make the sale unless office hours + transfer rules require it."""),
         
         message_lower = message.lower()
         
-        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales: You will talk, giev  price and try to make the sale, 
+        # OUT OF OFFICE HOURS: NEVER TRANSFER - Handle all calls and make sales
         if not is_office_hours:
-            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - You will talk, giev  price and try to make the sale")
+            print(f"🌙 OUT OF OFFICE HOURS: NEVER TRANSFER - You will talk, give price and try to make the sale")
             return False
         
         # OFFICE HOURS: Check transfer rules
@@ -645,7 +686,7 @@ Make the sale unless office hours + transfer rules require it."""),
         # Check price thresholds (Skip has NO LIMIT according to PDF rules)
         # So skip hire never transfers based on price
         
-        print(f"💰 SKIP AGENT: Office hours but no transfer needed - making the sale")
+        print(f"💰 SKIP AGENT: Office hours but no transfer needed - You will talk, give price and try to make the sale")
         return False
     
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
@@ -718,7 +759,7 @@ Make the sale unless office hours + transfer rules require it."""),
             print(f"💰 SKIP AGENT: Customer requests price and has required data - going to pricing")
             return 'price'
         
-        # NEW: Check for booking confirmation
+        # Check for booking confirmation
         booking_request = any(word in message_lower for word in ['book', 'booking', 'confirm booking', 'yes', 'proceed'])
         has_all_data = (data.get('service') and data.get('type') and data.get('postcode') and 
                        data.get('firstName') and data.get('phone') and data.get('has_pricing'))
@@ -779,13 +820,12 @@ Make the sale unless office hours + transfer rules require it."""),
             return f"Error getting pricing: {str(e)}"
     
     def _create_booking_with_payment_and_sms(self, data: Dict[str, Any]) -> str:
-        """NEW ENHANCED BOOKING PROCESS: Create ref, create price, generate payment link, send SMS"""
-        booking_ref = str(uuid.uuid4())[:8]
+        """NEW 3-STEP BOOKING PROCESS"""
         
-        print(f"📋 SKIP AGENT: ENHANCED BOOKING PROCESS STARTED")
-        print(f"    Step 1: Create booking reference: {booking_ref}")
-        print(f"    Step 2: Create booking quote")
-        print(f"    Step 3: Generate payment link")
+        print(f"📋 SKIP AGENT: 3-STEP BOOKING PROCESS STARTED")
+        print(f"    Step 1: Create booking reference")
+        print(f"    Step 2: Get price with booking reference")
+        print(f"    Step 3: Create payment link")
         print(f"    Step 4: Send SMS with payment link")
         
         try:
@@ -800,59 +840,78 @@ Make the sale unless office hours + transfer rules require it."""),
                         sms_tool = tool
             
             if not smp_tool:
-                print("❌ SKIP AGENT: SMPAPITool not found")
                 return "Booking tool not available"
             
-            # Step 2: Create booking quote with payment link
-            result = smp_tool._run(
-                action="create_booking_quote",
-                postcode=data.get('postcode'),
-                service=data.get('service'),
-                type=data.get('type'),
+            # STEP 1: CREATE BOOKING REF
+            print(f"🔄 STEP 1: Creating booking reference...")
+            booking_ref_result = smp_tool._run(
+                action="create_booking_ref",
                 firstName=data.get('firstName'),
                 phone=data.get('phone'),
-                booking_ref=booking_ref,
-                lastName=data.get('lastName', ''),
-                emailAddress=data.get('email', ''),
-                date=data.get('preferred_date', ''),
-                time=data.get('time', '')
+                postcode=data.get('postcode'),
+                service=data.get('service'),
+                type=data.get('type')
             )
             
-            print(f"📋 SKIP AGENT: BOOKING RESULT: {json.dumps(result, indent=2)}")
+            if not booking_ref_result.get('success'):
+                return f"Failed to create booking reference: {booking_ref_result.get('error')}"
             
-            if result.get('success'):
-                payment_link = result.get('payment_link', '')
-                price = result.get('final_price', result.get('price', data.get('price', 'N/A')))
-                phone = result.get('customer_phone', data.get('phone'))
+            booking_ref = booking_ref_result.get('booking_ref')
+            print(f"✅ STEP 1: Got booking_ref: {booking_ref}")
+            
+            # STEP 2: GET PRICE USING BOOKING_REF
+            print(f"🔄 STEP 2: Getting price using booking_ref...")
+            pricing_result = smp_tool._run(
+                action="get_price_with_booking_ref",
+                booking_ref=booking_ref,
+                postcode=data.get('postcode'),
+                service=data.get('service'),
+                type=data.get('type')
+            )
+            
+            if not pricing_result.get('success'):
+                return f"Failed to get pricing: {pricing_result.get('error')}"
+            
+            price = pricing_result.get('price')
+            print(f"✅ STEP 2: Got price: £{price}")
+            
+            # STEP 3: CREATE PAYMENT LINK
+            print(f"🔄 STEP 3: Creating payment link...")
+            payment_result = smp_tool._run(
+                action="create_payment_link",
+                booking_ref=booking_ref,
+                amount=price,
+                customer_phone=data.get('phone')
+            )
+            
+            if not payment_result.get('success'):
+                return f"Failed to create payment link: {payment_result.get('error')}"
+            
+            payment_link = payment_result.get('payment_link')
+            print(f"✅ STEP 3: Got payment link: {payment_link}")
+            
+            # STEP 4: SEND SMS VIA TWILIO
+            print(f"🔄 STEP 4: Sending SMS via Twilio...")
+            sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} skip booking is confirmed! Ref: {booking_ref}, Price: £{price}"
+            
+            if sms_tool:
+                sms_result = sms_tool._run(
+                    to_number=data.get('phone'),
+                    message=sms_message,
+                    payment_link=payment_link
+                )
                 
-                # Step 4: Send SMS with payment link
-                sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} skip booking (Ref: {booking_ref}) is confirmed! Price: £{price}"
-                
-                if sms_tool and phone and payment_link:
-                    sms_result = sms_tool._run(
-                        to_number=phone,
-                        message=sms_message,
-                        payment_link=payment_link
-                    )
-                    print(f"📱 SMS RESULT: {json.dumps(sms_result, indent=2)}")
-                    
-                    if sms_result.get('success'):
-                        response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {phone} via SMS."
-                    else:
-                        response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
+                if sms_result.get('success'):
+                    print(f"✅ STEP 4: SMS sent successfully")
+                    data['has_booking'] = True
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {data.get('phone')} via SMS."
                 else:
-                    response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}"
-                    if payment_link:
-                        response += f". Payment link: {payment_link}"
-                
-                # Call supplier if needed
-                self._call_supplier_if_needed(result, data)
-                
-                return response
+                    print(f"❌ STEP 4: SMS failed: {sms_result.get('error')}")
+                    data['has_booking'] = True
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
             else:
-                error = result.get('error', result.get('message', 'booking failed'))
-                print(f"❌ SKIP AGENT: Booking error: {error}")
-                return f"Unable to create booking: {error}"
+                data['has_booking'] = True
+                return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
                 
         except Exception as e:
             print(f"❌ SKIP AGENT: BOOKING EXCEPTION: {str(e)}")
@@ -876,22 +935,24 @@ class ManAndVanAgent:
         self.tools = tools
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are Man & Van agent. Follow same process as Skip agent.
+            ("system", """You are Man & Van agent. Follow same 3-step booking process as Skip agent.
 
 TRANSFER THRESHOLD: £500+ during office hours
 
-BOOKING PROCESS:
+3-STEP BOOKING PROCESS:
 1. Get customer details (name, phone, postcode, service, type)
-2. Get pricing
+2. Get pricing (if needed)
 3. If customer says "yes" or wants to book:
-   - Create booking reference
-   - Create booking quote 
-   - Generate payment link
-   - Send payment link via SMS
+   - Step 1: Create booking reference
+   - Step 2: Get price with booking reference
+   - Step 3: Create payment link
+   - Step 4: Send payment link via SMS
 
 Call tools using exact API format:
 - Pricing: smp_api(action="get_pricing", postcode=X, service="mav", type="small")
-- Booking: smp_api(action="create_booking_quote", postcode=X, service="mav", type=X, firstName=X, phone=X, booking_ref=X)
+- Step 1: smp_api(action="create_booking_ref", firstName=X, phone=X, postcode=X, service="mav", type="small")
+- Step 2: smp_api(action="get_price_with_booking_ref", booking_ref=X, postcode=X, service="mav", type="small")
+- Step 3: smp_api(action="create_payment_link", booking_ref=X, amount=X, customer_phone=X)
 - SMS: sms_tool(to_number=X, message=X, payment_link=X)"""),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
@@ -900,7 +961,7 @@ Call tools using exact API format:
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
         
-        print("✅ MAN & VAN AGENT initialized")
+        print("✅ MAN & VAN AGENT initialized with 3-step booking process")
     
     def process_message(self, message: str, context: Dict = None) -> str:
         print(f"\n🔧 MAV AGENT RECEIVED: '{message}'")
@@ -950,6 +1011,7 @@ Call tools using exact API format:
         elif current_step == 'product_specific' and not combined_data.get('product_specific'):
             response = "Any specific requirements?"
         elif current_step == 'price':
+            # IMPORTANT: Keep your conditional logic
             if combined_data.get('has_pricing'):
                 response = self._get_pricing(combined_data)
             else:
@@ -957,7 +1019,11 @@ Call tools using exact API format:
         elif current_step == 'date' and not combined_data.get('preferred_date'):
             response = "When would you like delivery?"
         elif current_step == 'booking':
-            response = self._create_booking_with_payment_and_sms(combined_data)
+            # IMPORTANT: Keep your conditional logic
+            if combined_data.get('has_booking'):
+                response = self._create_booking_with_payment_and_sms(combined_data)
+            else:
+                response = self._create_booking_with_payment_and_sms(combined_data)
         else:
             response = "What's your name?"
         
@@ -1029,7 +1095,7 @@ Call tools using exact API format:
         # Check price thresholds - MAV transfers for £500+
         # This would be checked after pricing is available
         
-        print(f"💰 MAV AGENT: Office hours but no transfer needed - making the sale")
+        print(f"💰 MAV AGENT: Office hours but no transfer needed - You will talk, give price and try to make the sale")
         return False
     
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
@@ -1143,10 +1209,9 @@ Call tools using exact API format:
             return f"Error getting pricing: {str(e)}"
     
     def _create_booking_with_payment_and_sms(self, data: Dict[str, Any]) -> str:
-        """Enhanced booking process: Create ref, create price, generate payment link, send SMS"""
-        booking_ref = str(uuid.uuid4())[:8]
+        """3-STEP BOOKING PROCESS FOR MAV"""
         
-        print(f"📋 MAV AGENT: ENHANCED BOOKING PROCESS STARTED")
+        print(f"📋 MAV AGENT: 3-STEP BOOKING PROCESS STARTED")
         
         try:
             # Find SMP and SMS tools
@@ -1160,56 +1225,72 @@ Call tools using exact API format:
                         sms_tool = tool
             
             if not smp_tool:
-                print("❌ MAV AGENT: SMPAPITool not found")
                 return "Booking tool not available"
             
-            # Create booking quote with payment link
-            result = smp_tool._run(
-                action="create_booking_quote",
-                postcode=data.get('postcode'),
-                service=data.get('service'),
-                type=data.get('type'),
+            # STEP 1: CREATE BOOKING REF
+            booking_ref_result = smp_tool._run(
+                action="create_booking_ref",
                 firstName=data.get('firstName'),
                 phone=data.get('phone'),
-                booking_ref=booking_ref,
-                lastName=data.get('lastName', ''),
-                emailAddress=data.get('email', ''),
-                date=data.get('preferred_date', ''),
-                time=data.get('time', '')
+                postcode=data.get('postcode'),
+                service=data.get('service'),
+                type=data.get('type')
             )
             
-            print(f"📋 MAV AGENT: BOOKING RESULT: {json.dumps(result, indent=2)}")
+            if not booking_ref_result.get('success'):
+                return f"Failed to create booking reference: {booking_ref_result.get('error')}"
             
-            if result.get('success'):
-                payment_link = result.get('payment_link', '')
-                price = result.get('final_price', result.get('price', data.get('price', 'N/A')))
-                phone = result.get('customer_phone', data.get('phone'))
+            booking_ref = booking_ref_result.get('booking_ref')
+            print(f"✅ STEP 1: Got booking_ref: {booking_ref}")
+            
+            # STEP 2: GET PRICE USING BOOKING_REF
+            pricing_result = smp_tool._run(
+                action="get_price_with_booking_ref",
+                booking_ref=booking_ref,
+                postcode=data.get('postcode'),
+                service=data.get('service'),
+                type=data.get('type')
+            )
+            
+            if not pricing_result.get('success'):
+                return f"Failed to get pricing: {pricing_result.get('error')}"
+            
+            price = pricing_result.get('price')
+            print(f"✅ STEP 2: Got price: £{price}")
+            
+            # STEP 3: CREATE PAYMENT LINK
+            payment_result = smp_tool._run(
+                action="create_payment_link",
+                booking_ref=booking_ref,
+                amount=price,
+                customer_phone=data.get('phone')
+            )
+            
+            if not payment_result.get('success'):
+                return f"Failed to create payment link: {payment_result.get('error')}"
+            
+            payment_link = payment_result.get('payment_link')
+            print(f"✅ STEP 3: Got payment link: {payment_link}")
+            
+            # STEP 4: SEND SMS VIA TWILIO
+            sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} man & van booking is confirmed! Ref: {booking_ref}, Price: £{price}"
+            
+            if sms_tool:
+                sms_result = sms_tool._run(
+                    to_number=data.get('phone'),
+                    message=sms_message,
+                    payment_link=payment_link
+                )
                 
-                # Send SMS with payment link
-                sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} man & van booking (Ref: {booking_ref}) is confirmed! Price: £{price}"
-                
-                if sms_tool and phone and payment_link:
-                    sms_result = sms_tool._run(
-                        to_number=phone,
-                        message=sms_message,
-                        payment_link=payment_link
-                    )
-                    print(f"📱 SMS RESULT: {json.dumps(sms_result, indent=2)}")
-                    
-                    if sms_result.get('success'):
-                        response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {phone} via SMS."
-                    else:
-                        response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
+                if sms_result.get('success'):
+                    data['has_booking'] = True
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {data.get('phone')} via SMS."
                 else:
-                    response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}"
-                    if payment_link:
-                        response += f". Payment link: {payment_link}"
-                
-                return response
+                    data['has_booking'] = True
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
             else:
-                error = result.get('error', result.get('message', 'booking failed'))
-                print(f"❌ MAV AGENT: Booking error: {error}")
-                return f"Unable to create booking: {error}"
+                data['has_booking'] = True
+                return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
                 
         except Exception as e:
             print(f"❌ MAV AGENT: BOOKING EXCEPTION: {str(e)}")
@@ -1228,18 +1309,20 @@ class GrabHireAgent:
 
 TRANSFER THRESHOLD: £300+ during office hours
 
-BOOKING PROCESS:
+3-STEP BOOKING PROCESS:
 1. Get customer details (name, phone, postcode, service, type)
-2. Get pricing
+2. Get pricing (if needed)
 3. If customer says "yes" or wants to book:
-   - Create booking reference
-   - Create booking quote 
-   - Generate payment link
-   - Send payment link via SMS
+   - Step 1: Create booking reference
+   - Step 2: Get price with booking reference
+   - Step 3: Create payment link
+   - Step 4: Send payment link via SMS
 
 Call tools using exact API format:
 - Pricing: smp_api(action="get_pricing", postcode=X, service="grab", type=X)
-- Booking: smp_api(action="create_booking_quote", postcode=X, service="grab", type=X, firstName=X, phone=X, booking_ref=X)
+- Step 1: smp_api(action="create_booking_ref", firstName=X, phone=X, postcode=X, service="grab", type=X)
+- Step 2: smp_api(action="get_price_with_booking_ref", booking_ref=X, postcode=X, service="grab", type=X)
+- Step 3: smp_api(action="create_payment_link", booking_ref=X, amount=X, customer_phone=X)
 - SMS: sms_tool(to_number=X, message=X, payment_link=X)"""),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}")
@@ -1248,7 +1331,7 @@ Call tools using exact API format:
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
         
-        print("✅ GRAB HIRE AGENT initialized")
+        print("✅ GRAB HIRE AGENT initialized with 3-step booking process")
     
     def process_message(self, message: str, context: Dict = None) -> str:
         print(f"\n🔧 GRAB AGENT RECEIVED: '{message}'")
@@ -1298,6 +1381,7 @@ Call tools using exact API format:
         elif current_step == 'product_specific' and not combined_data.get('product_specific'):
             response = "Any specific requirements?"
         elif current_step == 'price':
+            # IMPORTANT: Keep your conditional logic
             if combined_data.get('has_pricing'):
                 response = self._get_pricing(combined_data)
             else:
@@ -1305,7 +1389,11 @@ Call tools using exact API format:
         elif current_step == 'date' and not combined_data.get('preferred_date'):
             response = "When would you like delivery?"
         elif current_step == 'booking':
-            response = self._create_booking_with_payment_and_sms(combined_data)
+            # IMPORTANT: Keep your conditional logic
+            if combined_data.get('has_booking'):
+                response = self._create_booking_with_payment_and_sms(combined_data)
+            else:
+                response = self._create_booking_with_payment_and_sms(combined_data)
         else:
             response = "What's your name?"
         
@@ -1377,7 +1465,7 @@ Call tools using exact API format:
         # Check price thresholds - GRAB transfers for £300+
         # This would be checked after pricing is available
         
-        print(f"💰 GRAB AGENT: Office hours but no transfer needed - making the sale")
+        print(f"💰 GRAB AGENT: Office hours but no transfer needed - You will talk, give price and try to make the sale")
         return False
     
     def _extract_data(self, message: str, context: Dict = None) -> Dict[str, Any]:
@@ -1488,10 +1576,9 @@ Call tools using exact API format:
             return f"Error getting pricing: {str(e)}"
     
     def _create_booking_with_payment_and_sms(self, data: Dict[str, Any]) -> str:
-        """Enhanced booking process: Create ref, create price, generate payment link, send SMS"""
-        booking_ref = str(uuid.uuid4())[:8]
+        """3-STEP BOOKING PROCESS FOR GRAB"""
         
-        print(f"📋 GRAB AGENT: ENHANCED BOOKING PROCESS STARTED")
+        print(f"📋 GRAB AGENT: 3-STEP BOOKING PROCESS STARTED")
         
         try:
             # Find SMP and SMS tools
@@ -1505,56 +1592,72 @@ Call tools using exact API format:
                         sms_tool = tool
             
             if not smp_tool:
-                print("❌ GRAB AGENT: SMPAPITool not found")
                 return "Booking tool not available"
             
-            # Create booking quote with payment link
-            result = smp_tool._run(
-                action="create_booking_quote",
-                postcode=data.get('postcode'),
-                service=data.get('service'),
-                type=data.get('type'),
+            # STEP 1: CREATE BOOKING REF
+            booking_ref_result = smp_tool._run(
+                action="create_booking_ref",
                 firstName=data.get('firstName'),
                 phone=data.get('phone'),
-                booking_ref=booking_ref,
-                lastName=data.get('lastName', ''),
-                emailAddress=data.get('email', ''),
-                date=data.get('preferred_date', ''),
-                time=data.get('time', '')
+                postcode=data.get('postcode'),
+                service=data.get('service'),
+                type=data.get('type')
             )
             
-            print(f"📋 GRAB AGENT: BOOKING RESULT: {json.dumps(result, indent=2)}")
+            if not booking_ref_result.get('success'):
+                return f"Failed to create booking reference: {booking_ref_result.get('error')}"
             
-            if result.get('success'):
-                payment_link = result.get('payment_link', '')
-                price = result.get('final_price', result.get('price', data.get('price', 'N/A')))
-                phone = result.get('customer_phone', data.get('phone'))
+            booking_ref = booking_ref_result.get('booking_ref')
+            print(f"✅ STEP 1: Got booking_ref: {booking_ref}")
+            
+            # STEP 2: GET PRICE USING BOOKING_REF
+            pricing_result = smp_tool._run(
+                action="get_price_with_booking_ref",
+                booking_ref=booking_ref,
+                postcode=data.get('postcode'),
+                service=data.get('service'),
+                type=data.get('type')
+            )
+            
+            if not pricing_result.get('success'):
+                return f"Failed to get pricing: {pricing_result.get('error')}"
+            
+            price = pricing_result.get('price')
+            print(f"✅ STEP 2: Got price: £{price}")
+            
+            # STEP 3: CREATE PAYMENT LINK
+            payment_result = smp_tool._run(
+                action="create_payment_link",
+                booking_ref=booking_ref,
+                amount=price,
+                customer_phone=data.get('phone')
+            )
+            
+            if not payment_result.get('success'):
+                return f"Failed to create payment link: {payment_result.get('error')}"
+            
+            payment_link = payment_result.get('payment_link')
+            print(f"✅ STEP 3: Got payment link: {payment_link}")
+            
+            # STEP 4: SEND SMS VIA TWILIO
+            sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} grab hire booking is confirmed! Ref: {booking_ref}, Price: £{price}"
+            
+            if sms_tool:
+                sms_result = sms_tool._run(
+                    to_number=data.get('phone'),
+                    message=sms_message,
+                    payment_link=payment_link
+                )
                 
-                # Send SMS with payment link
-                sms_message = f"Hi {data.get('firstName')}, your {data.get('type')} grab hire booking (Ref: {booking_ref}) is confirmed! Price: £{price}"
-                
-                if sms_tool and phone and payment_link:
-                    sms_result = sms_tool._run(
-                        to_number=phone,
-                        message=sms_message,
-                        payment_link=payment_link
-                    )
-                    print(f"📱 SMS RESULT: {json.dumps(sms_result, indent=2)}")
-                    
-                    if sms_result.get('success'):
-                        response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {phone} via SMS."
-                    else:
-                        response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
+                if sms_result.get('success'):
+                    data['has_booking'] = True
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link sent to {data.get('phone')} via SMS."
                 else:
-                    response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}"
-                    if payment_link:
-                        response += f". Payment link: {payment_link}"
-                
-                return response
+                    data['has_booking'] = True
+                    return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
             else:
-                error = result.get('error', result.get('message', 'booking failed'))
-                print(f"❌ GRAB AGENT: Booking error: {error}")
-                return f"Unable to create booking: {error}"
+                data['has_booking'] = True
+                return f"✅ Booking confirmed! Ref: {booking_ref}, Price: £{price}. Payment link: {payment_link}"
                 
         except Exception as e:
             print(f"❌ GRAB AGENT: BOOKING EXCEPTION: {str(e)}")
@@ -1598,7 +1701,7 @@ def manage_conversation_context(conversation_id, message, data=None):
 def initialize_system():
     '''Initialize the complete system with all three agents'''
     
-    print("🚀 Initializing WasteKing Multi-Agent System...")
+    print("🚀 Initializing WasteKing Multi-Agent System with 3-Step Booking...")
     
     llm = ChatOpenAI(
         model="gpt-3.5-turbo",
@@ -1611,8 +1714,8 @@ def initialize_system():
         return None
     
     tools = [
-        SMPAPITool(),
-        SMSTool(  # Now properly using Twilio environment variables
+        SMPAPITool(),  # Updated with 3-step booking process
+        SMSTool(  # Twilio SMS integration
             account_sid=os.getenv('TWILIO_ACCOUNT_SID'),
             auth_token=os.getenv('TWILIO_AUTH_TOKEN'),
             phone_number=os.getenv('TWILIO_PHONE_NUMBER')
@@ -1633,11 +1736,14 @@ def initialize_system():
     print("🏢 OFFICE HOURS LOGIC:")
     print("  ✅ OUT OF HOURS: Handle ALL calls, make sales, NEVER transfer")
     print("  ✅ OFFICE HOURS: Check transfer thresholds for specific numbers")
-    print("📋 ENHANCED BOOKING PROCESS:")
-    print("  1️⃣ Create booking reference")
-    print("  2️⃣ Create booking quote")
-    print("  3️⃣ Generate payment link")
+    print("📋 3-STEP BOOKING PROCESS:")
+    print("  1️⃣ Create booking reference via API")
+    print("  2️⃣ Get price using booking reference")
+    print("  3️⃣ Create payment link")
     print("  4️⃣ Send SMS with payment link via Twilio")
+    print("🔧 CONDITIONAL LOGIC PRESERVED:")
+    print("  ✅ if has_pricing else get_pricing")
+    print("  ✅ if has_booking else create_booking")
     
     return {
         'skip_agent': skip_agent,
@@ -1657,22 +1763,28 @@ system = initialize_system()
 def index():
     '''Main endpoint'''
     return jsonify({
-        "message": "WasteKing Multi-Agent AI System - Enhanced Booking & SMS",
+        "message": "WasteKing Multi-Agent AI System - 3-Step Booking Process",
         "status": "running",
         "system_initialized": system is not None,
         "timestamp": datetime.now().isoformat(),
         "features": [
             "Three Agents: Skip, Man & Van, Grab Hire",
-            "Enhanced booking process with payment links",
+            "3-Step Booking Process: create_booking_ref, get_price_with_booking_ref, create_payment_link",
             "Twilio SMS integration",
             "OUT OF HOURS: Handle ALL calls, make sales",
             "OFFICE HOURS: Check transfer thresholds",
-            "SMPAPITool integration with improved booking"
+            "Conditional logic preserved: if has_pricing/has_booking"
         ],
         "agents": [
             "Skip Hire Agent (NO LIMIT transfer threshold)",
             "Man & Van Agent (£500+ transfer threshold)",
             "Grab Hire Agent (£300+ transfer threshold, handles all others)"
+        ],
+        "booking_process": [
+            "Step 1: create_booking_ref",
+            "Step 2: get_price_with_booking_ref", 
+            "Step 3: create_payment_link",
+            "Step 4: send SMS via Twilio"
         ],
         "endpoints": [
             "/api/wasteking",
@@ -1717,7 +1829,7 @@ def process_customer_message():
         
         context['conversation_id'] = conversation_id
         
-        # Route to appropriate agent (currently only Skip agent is fully implemented)
+        # Route to appropriate agent
         message_lower = customer_message.lower()
         
         if any(word in message_lower for word in ['man and van', 'mav', 'man & van']):
@@ -1758,7 +1870,7 @@ def health_check():
             "status": "healthy",
             "timestamp": datetime.now().isoformat(),
             "system_initialized": system is not None,
-            "version": "WasteKing System v4.0 - Enhanced Booking & SMS"
+            "version": "WasteKing System v5.0 - 3-Step Booking Process"
         }
         
         if system:
@@ -1766,7 +1878,13 @@ def health_check():
                 "tools_loaded": len(system['tools']),
                 "active_conversations": len(conversation_contexts),
                 "agents_available": ['skip_agent', 'mav_agent', 'grab_agent'],
-                "twilio_configured": os.getenv('TWILIO_ACCOUNT_SID') is not None
+                "twilio_configured": os.getenv('TWILIO_ACCOUNT_SID') is not None,
+                "booking_process": [
+                    "create_booking_ref",
+                    "get_price_with_booking_ref", 
+                    "create_payment_link",
+                    "send_sms_with_twilio"
+                ]
             })
         
         return jsonify(health_status)
@@ -1793,11 +1911,30 @@ if __name__ == '__main__':
         print("System initialized successfully")
         print("🔧 KEY FEATURES:")
         print("  ✅ Three agents: Skip, Man & Van, Grab Hire")
-        print("  ✅ Enhanced booking process with payment links")
-        print("  ✅ Twilio SMS integration for payment links")
+        print("  ✅ 3-Step Booking Process:")
+        print("      1️⃣ create_booking_ref")
+        print("      2️⃣ get_price_with_booking_ref")
+        print("      3️⃣ create_payment_link")
+        print("      4️⃣ send SMS via Twilio")
         print("  ✅ OUT OF HOURS: Handle ALL calls, make sales, NEVER transfer")
         print("  ✅ OFFICE HOURS: Check transfer thresholds")
-        print("  ✅ SMPAPITool with improved booking quote functionality")
+        print("  ✅ Conditional logic preserved:")
+        print("      - if has_pricing else get_pricing")
+        print("      - if has_booking else create_booking")
+        print("  ✅ SMS integration with Twilio for payment links")
+        print("\n📋 API ENDPOINTS AVAILABLE:")
+        print("  🔧 create_booking_ref")
+        print("  🔧 get_price_with_booking_ref") 
+        print("  🔧 create_payment_link")
+        print("  🔧 get_pricing (legacy)")
+        print("  🔧 create_booking_quote (legacy)")
+        print("  🔧 take_payment")
+        print("  🔧 call_supplier")
+        print("\n🌐 KOYEB WEBHOOK URLs:")
+        print("  📋 /api/wasteking-create-booking-ref")
+        print("  💰 /api/wasteking-get-price-with-ref") 
+        print("  💳 /api/wasteking-create-payment-link")
+        print("  📱 /api/send-payment-sms")
     else:
         print("System initialization failed - check configuration")
     
