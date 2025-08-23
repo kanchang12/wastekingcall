@@ -97,23 +97,26 @@ class AgentOrchestrator:
         # PRIORITY 3: MISSING DATA - Ask for what's needed
         else:
             missing = []
-            if not postcode:
-                missing.append("postcode")
-            if wants_booking and not firstName:
-                missing.append("name")
-            if wants_booking and not phone:
-                missing.append("phone number")
-                
-            if missing:
-                if len(missing) == 1:
-                    if missing[0] == "postcode":
-                        response = "What's your postcode?"
-                    elif missing[0] == "name":
-                        response = "What's your name?"
+            
+            # For pricing, only need postcode
+            if wants_price and not postcode:
+                response = "What's your postcode?"
+            # For booking, need everything
+            elif wants_booking:
+                if not postcode:
+                    missing.append("postcode")
+                if not firstName:
+                    missing.append("name")
+                if not phone:
+                    missing.append("phone number")
+                    
+                if missing:
+                    if len(missing) == 1:
+                        response = f"What's your {missing[0]}?"
                     else:
-                        response = "What's your phone number?"
+                        response = f"Just need your {' and '.join(missing)}."
                 else:
-                    response = f"Just need your {' and '.join(missing)}."
+                    response = "How can I help with your waste collection?"
             else:
                 response = "How can I help with your waste collection?"
         
@@ -139,12 +142,10 @@ class AgentOrchestrator:
                 if context.get(key):
                     extracted[key] = context[key]
         
-        # Extract postcode (multiple formats)
+        # Extract postcode (FULL UK postcodes only, no spaces)
         postcode_patterns = [
-            r'\b([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9]?[A-Z]{2})\b',  # Standard UK
-            r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s?[0-9][A-Z]{2})\b',   # With space
-            r'(LS\s?1\s?4\s?[A-Z]{2})',  # Leeds specific
-            r'(M\s?1\s?1\s?AB)',  # Manchester specific
+            r'\b([A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2})\b',  # Full UK postcode like LS14ED, M11AB
+            r'([A-Z]{1,2}[0-9]{1,2}[A-Z]?\s+[0-9][A-Z]{2})',  # With space, will remove space
         ]
         
         for pattern in postcode_patterns:
@@ -155,18 +156,17 @@ class AgentOrchestrator:
                 print(f"✅ EXTRACTED POSTCODE: {postcode}")
                 break
         
-        # Extract name
-        name_patterns = [
-            r'(?:name|my name is|i am|call me|i\'m)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-            r'^([A-Z][a-z]+)(?:\s+speaking|\s+here)',  # "John speaking"
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
+        # Extract name (simple and direct)
+        if 'name is' in message.lower():
+            match = re.search(r'name\s+is\s+([A-Z][a-z]+)', message, re.IGNORECASE)
             if match:
-                name = match.group(1).strip()
-                extracted['firstName'] = name
-                print(f"✅ EXTRACTED NAME: {name}")
-                break
+                extracted['firstName'] = match.group(1)
+                print(f"✅ EXTRACTED NAME: {match.group(1)}")
+        elif 'name' in message.lower():
+            match = re.search(r'name\s+([A-Z][a-z]+)', message, re.IGNORECASE)
+            if match:
+                extracted['firstName'] = match.group(1)
+                print(f"✅ EXTRACTED NAME: {match.group(1)}")
         
         # Extract phone (multiple formats)
         phone_patterns = [
