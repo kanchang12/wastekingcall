@@ -294,35 +294,53 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         elif stage == 'A7_QUOTE_PRESENTATION':
             wants_booking = any(word in message.lower() for word in ['book', 'yes', 'confirm', 'go ahead'])
             
-            if wants_booking and firstName and phone:
-                # F2: CREATE BOOKING QUOTE with all surcharges
-                booking_ref = str(uuid.uuid4())[:8]
-                booking_result = self._create_booking_quote(skip_size, 'skip', postcode, firstName, phone, booking_ref)
+            if wants_booking:
+                # Step 1: Ensure we have the customer's name
+                if not firstName:
+                    conversation_state['stage'] = 'F1_NAME'
+                    response = "Can I have your name to complete the booking?"
                 
-                if booking_result.get('success'):
-                    base_price = booking_result.get('final_price', booking_result.get('price', 0))
-                    final_price = float(base_price) + conversation_state.get('total_surcharge', 0)
-                    
-                    response = f"✅ BOOKING CONFIRMED!\n"
-                    response += f"📋 Ref: {booking_ref}\n"
-                    response += f"💰 Final Price: £{final_price} (including all surcharges)\n"
-                    response += self._add_booking_terms()
-                    
-                    # F3: SEND PAYMENT LINK
-                    payment_result = self._send_payment_link(phone, booking_ref, str(final_price))
-                    if payment_result.get('success'):
-                        response += f"\n💳 Payment link sent to {phone} - pay to confirm!"
+                # Step 2: Ensure we have the customer's phone number
+                elif not phone:
+                    conversation_state['stage'] = 'F1_PHONE_CONFIRMATION'
+                    response = "Can I have your phone number to complete the booking?"
+                
+                # Step 3: All info available, create booking
                 else:
-                    response = f"I'll confirm your booking and send payment details to {phone} shortly."
+                    # Generate booking reference
+                    booking_ref = str(uuid.uuid4())[:8]
+                    
+                    # Call your function to create a booking quote
+                    booking_result = self._create_booking_quote(skip_size, 'skip', postcode, firstName, phone, booking_ref)
+                    
+                    if booking_result.get('success'):
+                        base_price = booking_result.get('final_price', booking_result.get('price', 0))
+                        total_surcharge = conversation_state.get('total_surcharge', 0)
+                        final_price = float(base_price) + total_surcharge
+                        
+                        response = f"✅ BOOKING CONFIRMED!\n"
+                        response += f"📋 Ref: {booking_ref}\n"
+                        response += f"💰 Final Price: £{final_price} (including all surcharges)\n"
+                        response += self._add_booking_terms()
+                        
+                        # Step 4: Send payment SMS
+                        payment_result = self._send_payment_link(phone, booking_ref, str(final_price))
+                        if payment_result.get('success'):
+                            response += f"\n💳 Payment link sent to {phone} - pay to confirm!"
+                        else:
+                            response += "\n⚠️ Failed to send payment SMS. Please contact support."
+                        
+                        # Step 5: Update conversation state
+                        conversation_state['stage'] = 'BOOKED'
+                        conversation_state['bookingRef'] = booking_ref
+                        conversation_state['final_price'] = final_price
+                    
+                    else:
+                        response = f"❌ Sorry, I couldn't create your booking. Our team will contact you shortly."
             
-            elif wants_booking and not firstName:
-                response = "What's your name?"
-                conversation_state['stage'] = 'F1_PHONE_CONFIRMATION'
-            elif wants_booking and not phone:
-                response = "What's your phone number?"
-                conversation_state['stage'] = 'F1_PHONE_CONFIRMATION'
             else:
-                response = "Would you like to book this skip?"
+                response = "Would you like to book this?"
+
         
         # F1: PHONE CONFIRMATION
         elif stage == 'F1_PHONE_CONFIRMATION':
@@ -421,6 +439,42 @@ Upholstered furniture/sofas - "No, sofa is not allowed in a skip as it's upholst
         for key in ['postcode', 'firstName', 'phone', 'size', 'waste_type']:
             if key in extracted:
                 state[key] = extracted[key]
+
+    def _handle_booking_confirmation(self, state: Dict, extracted: Dict) -> str:
+        """Handle customer confirming booking"""
+        # Ensure we have necessary details
+        firstName = extracted.get('firstName')
+        phone = extracted.get('phone')
+        skip_size = extracted.get('size', '8yd')
+        postcode = extracted.get('postcode')
+        final_price = state.get('final_price')
+    
+        if not firstName or not phone:
+            return "I need your name and phone number to create the booking."
+    
+        # Call your existing _confirm_and_book
+        booking_result = self._confirm_and_book(skip_size, 'skip', postcode, firstName, phone, final_price)
+    
+        if not booking_result.get("success"):
+            return f"❌ Sorry, there was an error creating your booking: {booking_result.get('error', 'Unknown')}"
+    
+        booking_ref = booking_result.get("bookingRef")
+        payment_link = booking_result.get("paymentLink")
+    
+        # Update state
+        state["stage"] = "BOOKED"
+        state["bookingRef"] = booking_ref
+    
+        response = (
+            f"✅ Your booking is confirmed!\n"
+            f"📋 Reference: {booking_ref}\n"
+            f"💰 Total: £{final_price}\n"
+            f"💳 Payment link sent via SMS: {payment_link}\n"
+            f"🚛 Delivery will be scheduled once payment is completed."
+        )
+    
+        return response
+
     
     def _continue_to_location_check(self, state: Dict, extracted: Dict) -> str:
         """Continue to location check"""
