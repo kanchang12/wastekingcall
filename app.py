@@ -210,13 +210,17 @@ class SMPAPITool(BaseTool):
             headers = {"Content-Type": "application/json"}
             if method.upper() == "POST":
                 r = requests.post(url, json=payload, headers=headers, timeout=10)
+                if r.status_code == 404:  # fallback
+                    r = requests.get(url, params=payload, headers=headers, timeout=10)
             else:
                 r = requests.get(url, params=payload, headers=headers, timeout=10)
+    
             if r.status_code == 200:
                 return r.json()
             return {"success": False, "error": f"HTTP {r.status_code}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
 
     # NEW 3-STEP BOOKING PROCESS
     def _create_booking_ref(self, **kwargs) -> Dict[str, Any]:
@@ -1231,26 +1235,26 @@ NEVER mention callbacks or office hours to customers. Make the sale."""),
             
             # Enhanced type extraction for MAV - handle cubic yards and set default
             if any(size in message.lower() for size in ['small', 'small van']):
-                data['type'] = 'small'
+                data['type'] = '4yd'
                 print(f"✅ MAV AGENT: Extracted type: small")
             elif any(size in message.lower() for size in ['medium', 'medium van']):
-                data['type'] = 'medium'
+                data['type'] = '6yd'
                 print(f"✅ MAV AGENT: Extracted type: medium")
             elif any(size in message.lower() for size in ['large', 'large van']):
-                data['type'] = 'large'
+                data['type'] = '8yd'
                 print(f"✅ MAV AGENT: Extracted type: large")
             elif any(size in message.lower() for size in ['4 cubic', '4 yard', '4-yard', '4yd']):
-                data['type'] = 'small'  # 4 cubic yards = small van
+                data['type'] = '4yd'  # 4 cubic yards = small van
                 print(f"✅ MAV AGENT: Extracted type: small (from 4 cubic yards)")
             elif any(size in message.lower() for size in ['6 cubic', '6 yard', '6-yard', '6yd']):
-                data['type'] = 'medium'  # 6 cubic yards = medium van
+                data['type'] = '6yd'  # 6 cubic yards = medium van
                 print(f"✅ MAV AGENT: Extracted type: medium (from 6 cubic yards)")
             elif any(size in message.lower() for size in ['8 cubic', '8 yard', '8-yard', '8yd']):
-                data['type'] = 'large'  # 8 cubic yards = large van
+                data['type'] = '8yd'  # 8 cubic yards = large van
                 print(f"✅ MAV AGENT: Extracted type: large (from 8 cubic yards)")
             else:
                 # DEFAULT: Set small as default type for MAV
-                data['type'] = 'small'
+                data['type'] = '4yd'
                 print(f"✅ MAV AGENT: Set default type: small")
         
         if 'kanchen ghosh' in message.lower():
