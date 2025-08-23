@@ -120,17 +120,19 @@ Make the sale unless PDF specifically requires transfer."""),
         elif current_step == 'product_specific' and not combined_data.get('product_specific'):
             response = "Any specific requirements?"
         elif current_step == 'price':
-            combined_data['has_pricing'] = True
-            response = self._get_pricing(combined_data)
+            if combined_data.get('has_pricing'):
+                response = self._get_pricing(combined_data)
+            else:
+                response = self._get_pricing(combined_data)
         elif current_step == 'date' and not combined_data.get('preferred_date'):
             response = "When would you like delivery?"
         elif current_step == 'booking':
-            response = self._create_booking(combined_data)
+            if current_step == 'booking':
+                response = self._create_booking(combined_data)
+            else:
+                response = self._create_booking(combined_data)
         else:
             response = "What's your name?"
-        
-        # Save updated state
-        self._save_state(conversation_id, combined_data)
         
         print(f"✅ SKIP AGENT RESPONSE: {response}")
         return response
