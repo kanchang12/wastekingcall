@@ -11,7 +11,7 @@ from agents.elevenlabs_supplier_caller import ElevenLabsSupplierCaller
 class SMPAPITool(BaseTool):
     name: str = "smp_api"
     description: str = """WasteKing API for pricing, booking quotes, payment processing, and supplier calling."""
-    koyeb_url: str = Field(default_factory=lambda: os.getenv('KOYEB_URL', 'https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app'))
+    koyeb_url: str = "https://internal-porpoise-onewebonly-1b44fcb9.koyeb.app"
     
     def _run(self, action: str, **kwargs) -> Dict[str, Any]:
         print(f"\n🔧 ==================== SMP API TOOL CALLED ====================")
@@ -24,9 +24,9 @@ class SMPAPITool(BaseTool):
             if action == "get_pricing":
                 print(f"🔧 SMP API TOOL: Calling _get_pricing()")
                 result = self._get_pricing(**kwargs)
-            elif action == "create_booking_quote1":
-                print(f"🔧 SMP API TOOL: Calling _create_booking_quote1()")
-                result = self._create_booking_quote1(**kwargs)
+            elif action == "create_booking_quote":
+                print(f"🔧 SMP API TOOL: Calling _create_booking_quote()")
+                result = self._create_booking_quote(**kwargs)
             elif action == "take_payment":
                 print(f"🔧 SMP API TOOL: Calling _take_payment()")
                 result = self._take_payment(**kwargs)
@@ -48,125 +48,52 @@ class SMPAPITool(BaseTool):
             print(f"❌ SMP API TOOL ERROR: {error_result}")
             print(f"🔧 ==================== SMP API TOOL FAILED ====================\n")
             return error_result
-    
-    def _send_koyeb_webhook(self, url, data_payload, method="POST"):
+
+    # -------------------------
+    # EXACT ORCHESTRATOR FUNCTIONS - COPIED FROM ORCHESTRATOR.PY
+    # -------------------------
+
+    def _send_koyeb_webhook(self, url: str, payload: dict, method: str = "POST") -> dict:
         try:
-            print(f"🔄 SMP API TOOL: Sending {method} to: {url}")
-            print(f"🔄 Payload: {json.dumps(data_payload, indent=2)}")
-            print(f"🔧 SMP API TOOL: TOOL CALL - requests.{method.lower()}()")
-            
-            if method.upper() == "GET":
-                response = requests.get(url, params=data_payload, timeout=30)
+            headers = {"Content-Type": "application/json"}
+            if method.upper() == "POST":
+                r = requests.post(url, json=payload, headers=headers, timeout=10)
             else:
-                response = requests.post(url, json=data_payload, timeout=30)
-            
-            print(f"🔄 Response status: {response.status_code}")
-            print(f"🔄 Response text: {response.text}")
-            
-            if response.status_code in [200, 201]:
-                try:
-                    return response.json()
-                except json.JSONDecodeError:
-                    return {"success": False, "error": f"Invalid JSON: {response.text}"}
-            else:
-                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
-                
+                r = requests.get(url, params=payload, headers=headers, timeout=10)
+            if r.status_code == 200:
+                return r.json()
+            return {"success": False, "error": f"HTTP {r.status_code}"}
         except Exception as e:
-            print(f"❌ Request failed: {e}")
             return {"success": False, "error": str(e)}
-    
-    def _get_pricing(self, postcode: Optional[str] = None, service: Optional[str] = None, 
-                    type: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        
-        print(f"💰 GET_PRICING:")
-        print(f"   📍 Postcode: {postcode}")
-        print(f"   🚛 Service: {service}")
-        print(f"   📦 Type: {type}")
-        
-        if not postcode or not service or not type:
-            return {"success": False, "error": "Missing required parameters"}
-        
-        # Clean postcode
-        postcode = postcode.upper().strip().replace(' ', '')
-        print(f"   📍 Clean Postcode: {postcode}")
-        
-        payload = {"postcode": postcode, "service": service, "type": type}
+
+    def _get_pricing(self, postcode: str, service: str, type: str) -> Dict[str, Any]:
+        """24/7 pricing - always available"""
         url = f"{self.koyeb_url}/api/wasteking-get-price"
-        
-        # Try POST first
-        response = self._send_koyeb_webhook(url, payload, "POST")
-        
-        # If POST fails, try GET
-        if not response.get("success"):
-            response = self._send_koyeb_webhook(url, payload, "GET")
-        
-        if response.get("success"):
-            return {
-                "success": True,
-                "booking_ref": response.get('booking_ref'),
-                "price": response.get('price'),
-                "real_supplier_phone": os.getenv('SUPPLIER_PHONE', '+44XXXXXXXXXX'),
-                "supplier_name": os.getenv('SUPPLIER_NAME', 'Local Supplier'),
-                "postcode": postcode,
-                "service": service,
-                "type": type
-            }
-        
-        return {"success": False, "message": "No pricing available"}
-    
-    def _create_booking_quote1(self, **kwargs) -> Dict[str, Any]:
-        
-        print(f"📋 CREATE_BOOKING_QUOTE:")
-        print(f"   👤 Name: {kwargs.get('firstName')}")
-        print(f"   📞 Phone: {kwargs.get('phone')}")
-        print(f"   📍 Postcode: {kwargs.get('postcode')}")
-        print(f"   🚛 Service: {kwargs.get('service')}")
-        
-        required = ['postcode', 'service', 'type', 'firstName', 'phone', 'booking_ref']
-        for field in required:
-            if not kwargs.get(field):
-                return {"success": False, "error": f"Missing: {field}"}
-        
-        # Clean postcode
-        postcode = kwargs['postcode'].upper().replace(" ", "").strip()
-        
-        data_payload = {
-            "booking_ref": kwargs.get("booking_ref"),
-            "postcode": postcode,
-            "service": kwargs.get("service"),
-            "type": kwargs.get("type"),
-            "firstName": kwargs.get("firstName"),
-            "phone": kwargs.get("phone"),
-            "lastName": kwargs.get("lastName", ""),
-            "email": kwargs.get("emailAddress", ""),
-            "date": kwargs.get("date", ""),
-            "time": kwargs.get("time", "")
-        }
-        
+        payload = {"postcode": postcode, "service": service, "type": type}
+        print(f"🔥 PRICING CALL: {payload}")
+        return self._send_koyeb_webhook(url, payload, method="POST")
+
+    def _create_booking_quote(self, type: str, service: str, postcode: str, firstName: str, phone: str, booking_ref: str) -> Dict[str, Any]:
+        """24/7 booking - always available"""
         url = f"{self.koyeb_url}/api/wasteking-confirm-booking"
-        
-        # Try POST first
-        response = self._send_koyeb_webhook(url, data_payload, "POST")
-        
-        # If POST fails, try GET
-        if not response.get("success"):
-            response = self._send_koyeb_webhook(url, data_payload, "GET")
-        
-        if response.get("success"):
-            return {
-                "success": True,
-                "message": "Booking confirmed",
-                "booking_ref": response.get('booking_ref'),
-                "payment_link": response.get('payment_link'),
-                "final_price": response.get('price'),
-                "customer_phone": kwargs.get("phone")
-            }
-        
-        return {"success": False, "message": "Booking failed"}
+        payload = {
+            "booking_ref": booking_ref,
+            "postcode": postcode,
+            "service": service,
+            "type": type,
+            "firstName": firstName,
+            "phone": phone
+        }
+        print(f"🔥 BOOKING CALL: {payload}")
+        return self._send_koyeb_webhook(url, payload, method="POST")
+
+    # -------------------------
+    # AGENT TOOL FUNCTIONS (for AI agents to call)
+    # -------------------------
     
     def _take_payment(self, customer_phone: Optional[str] = None, quote_id: Optional[str] = None, 
                      amount: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        
+        """Payment processing for AI agents"""
         print(f"📱 TAKE_PAYMENT:")
         print(f"   📞 Phone: {customer_phone}")
         print(f"   📋 Quote ID: {quote_id}")
@@ -175,7 +102,7 @@ class SMPAPITool(BaseTool):
         if not customer_phone or not quote_id:
             return {"success": False, "error": "Missing phone or quote_id"}
         
-        data_payload = {
+        payload = {
             "quote_id": quote_id,
             "customer_phone": customer_phone,
             "amount": amount or "1",
@@ -183,7 +110,7 @@ class SMPAPITool(BaseTool):
         }
         
         url = f"{self.koyeb_url}/api/send-payment-sms"
-        response = self._send_koyeb_webhook(url, data_payload, "POST")
+        response = self._send_koyeb_webhook(url, payload, "POST")
         
         if response.get("status") == "success":
             return {
@@ -200,7 +127,7 @@ class SMPAPITool(BaseTool):
     
     def _call_supplier(self, supplier_phone: Optional[str] = None, supplier_name: Optional[str] = None, 
                       booking_ref: Optional[str] = None, message: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        
+        """Supplier calling for AI agents"""
         print(f"📞 CALL_SUPPLIER:")
         print(f"   📞 Phone: {supplier_phone}")
         print(f"   👤 Name: {supplier_name}")
@@ -234,8 +161,7 @@ class SMPAPITool(BaseTool):
                 "booking_ref": booking_ref
             }
             
-            print(f"🔧 SMP API TOOL: TOOL CALL - ElevenLabsSupplierCaller.call_supplier_from_smp_response")
-            print(f"🔧 TOOL CALL: caller.call_supplier_from_smp_response(smp_response, booking_details)")
+            print(f"🔧 SMP API TOOL: Calling supplier via ElevenLabs")
             result = caller.call_supplier_from_smp_response(smp_response, booking_details)
             
             return {
