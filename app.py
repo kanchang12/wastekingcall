@@ -308,15 +308,15 @@ class DateTimeTool(BaseTool):
 # ===============================
 # SMS TOOL CLASS
 # ===============================
+# ===============================
+# SMS TOOL CLASS
+# ===============================
 class SMSTool(BaseTool):
     name: str = "sms_tool"
     description: str = "Send SMS messages"
-    
-    def __init__(self, account_sid: str = None, auth_token: str = None, phone_number: str = None):
-        super().__init__()
-        self.account_sid = account_sid
-        self.auth_token = auth_token
-        self.phone_number = phone_number
+    account_sid: Optional[str] = Field(default=None)
+    auth_token: Optional[str] = Field(default=None) 
+    phone_number: Optional[str] = Field(default=None)
     
     def _run(self, to_number: str, message: str) -> Dict[str, Any]:
         print(f"📱 SMS TOOL: Sending to {to_number}: {message}")
