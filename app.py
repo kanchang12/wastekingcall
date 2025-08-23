@@ -362,24 +362,32 @@ class DateTimeTool(BaseTool):
 class SMSTool(BaseTool):
     name: str = "sms_tool"
     description: str = "Send SMS messages using Twilio"
+    account_sid: Optional[str] = Field(default=None)
+    auth_token: Optional[str] = Field(default=None)
+    phone_number: Optional[str] = Field(default=None)
     
-    def __init__(self, account_sid: str = None, auth_token: str = None, phone_number: str = None):
-        super().__init__()
-        self.account_sid = account_sid or os.getenv('TWILIO_ACCOUNT_SID')
-        self.auth_token = auth_token or os.getenv('TWILIO_AUTH_TOKEN')
-        self.phone_number = phone_number or os.getenv('TWILIO_PHONE_NUMBER')
+    def __init__(self, account_sid: str = None, auth_token: str = None, phone_number: str = None, **kwargs):
+        super().__init__(
+            account_sid=account_sid or os.getenv('TWILIO_ACCOUNT_SID'),
+            auth_token=auth_token or os.getenv('TWILIO_AUTH_TOKEN'),
+            phone_number=phone_number or os.getenv('TWILIO_PHONE_NUMBER'),
+            **kwargs
+        )
+        
+        # Set client separately (not as Pydantic field)
+        self._client = None
         
         # Try to import Twilio
         try:
             from twilio.rest import Client
             if self.account_sid and self.auth_token:
-                self.client = Client(self.account_sid, self.auth_token)
+                self._client = Client(self.account_sid, self.auth_token)
                 print("✅ SMS TOOL: Twilio client initialized successfully")
             else:
-                self.client = None
+                self._client = None
                 print("⚠️ SMS TOOL: Twilio credentials not found, SMS will be simulated")
         except ImportError:
-            self.client = None
+            self._client = None
             print("⚠️ SMS TOOL: Twilio library not installed, SMS will be simulated")
     
     def _run(self, to_number: str, message: str, payment_link: str = None) -> Dict[str, Any]:
@@ -395,9 +403,9 @@ class SMSTool(BaseTool):
             full_message += f"\n\nComplete your payment: {payment_link}"
         
         try:
-            if self.client and self.phone_number:
+            if self._client and self.phone_number:
                 # Send real SMS via Twilio
-                message_obj = self.client.messages.create(
+                message_obj = self._client.messages.create(
                     body=full_message,
                     from_=self.phone_number,
                     to=to_number
