@@ -434,14 +434,9 @@ def _extract_data(message: str, context: Dict = None) -> Dict[str, Any]:
     
     # Corrected postcode extraction to handle partial codes
     postcode_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b', message.upper())
-    outward_code_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?)\b', message.upper())
+    data['postcode'] = postcode_match.group(1).replace(' ', '')
+    print(f"✅ Extracted full postcode: {data['postcode']}")
 
-    if postcode_match:
-        data['postcode'] = postcode_match.group(1).replace(' ', '')
-        print(f"✅ Extracted full postcode: {data['postcode']}")
-    elif outward_code_match:
-        data['postcode'] = outward_code_match.group(1).replace(' ', '')
-        print(f"⚠️ Extracted partial postcode: {data['postcode']}")
     
     if 'skip' in message.lower():
         data['service'] = 'skip'
