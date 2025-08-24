@@ -206,7 +206,14 @@ class SMPAPITool(BaseTool):
     def _create_booking(self, **kwargs) -> Dict[str, Any]:
         """Step 1: Creates a new booking and returns a booking reference."""
         payload = {"type": "chatbot", "source": "wasteking.co.uk"}
-        return self._send_request("api/booking/create", payload)
+        response = self._send_request("api/booking/create", payload)
+    
+        # If bookingRef exists, extract it clearly
+        if response.get("success") and "bookingRef" in response:
+            return {"success": True, "bookingRef": response["bookingRef"], "raw": response}
+        
+        return {"success": False, "error": "No bookingRef returned", "raw": response}
+
     
     def _update_booking_with_search(self, booking_ref: str, postcode: str, service: str) -> Dict[str, Any]:
         """Step 2: Updates a booking with search details to get prices."""
@@ -214,9 +221,23 @@ class SMPAPITool(BaseTool):
         return self._send_request("api/booking/update", payload)
 
     def _update_booking_with_details(self, booking_ref: str, customer_details: dict, service_details: dict) -> Dict[str, Any]:
-        """Step 3: Updates a booking with customer and service details."""
+        """Step 3: Updates a booking with customer and service details, then automatically finalizes booking (Step 4)."""
+        
+        # Step 3: update booking with customer and service details
         payload = {"bookingRef": booking_ref, "customer": customer_details, "service": service_details}
-        return self._send_request("api/booking/update", payload)
+        step3_result = self._send_request("api/booking/update", payload)
+        
+        if not step3_result.get("success"):
+            return step3_result  # return error if Step 3 failed
+        
+        # Step 4: automatically finalize booking and get payment link
+        step4_result = self._update_booking_with_quote(booking_ref)
+        if step4_result.get("success"):
+            payment_url = step4_result.get("postPaymentUrl", "No payment URL returned")
+            print(f"✅ Booking finalized! Payment URL: {payment_url}")
+        
+        return step4_result
+
         
     def _update_booking_with_quote(self, booking_ref: str, **kwargs) -> Dict[str, Any]:
         """Step 4: Finalizes the booking and gets the payment URL."""
