@@ -432,11 +432,20 @@ def _check_transfer_needed_with_office_hours(message: str, data: Dict[str, Any],
 def _extract_data(message: str, context: Dict = None) -> Dict[str, Any]:
     data = context.copy() if context else {}
     
-    # Corrected postcode extraction to handle partial codes
+    # Corrected postcode extraction to handle full and partial codes
     postcode_match = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b', message.upper())
-    data['postcode'] = postcode_match.group(1).replace(' ', '')
-    print(f"✅ Extracted full postcode: {data['postcode']}")
-
+    outward_code_match = re.search(r'\b([A-Z]{1,2}\d{1,3}[A-Z]?)\b', message.upper())
+    
+    if postcode_match:
+        data['postcode'] = postcode_match.group(1).replace(' ', '')
+        print(f"✅ Extracted full postcode: {data['postcode']}")
+    elif outward_code_match:
+        data['postcode'] = outward_code_match.group(1).replace(' ', '')
+        print(f"⚠️ Extracted partial postcode: {data['postcode']}")
+    else:
+        # Handle cases where no postcode is found
+        data['postcode'] = None
+        print("❌ No postcode found in message.")
     
     if 'skip' in message.lower():
         data['service'] = 'skip'
