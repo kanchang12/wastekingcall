@@ -716,21 +716,30 @@ class SkipHireAgent:
         
         current_step = _determine_step(combined_data, message)
         
-        if current_step == 'price' or current_step == 'booking':
-            response = _create_booking_and_get_price(combined_data, self.tools)
-        else:
-            if not combined_data.get('firstName'):
-                response = "What's your name?"
-            elif not combined_data.get('postcode'):
-                response = "What's your postcode?"
-            elif len(combined_data.get('postcode', '')) < 5:
-                response = "Could you please provide the full postcode?"
-            elif not combined_data.get('service'):
-                response = "What service do you need?"
-            # Add logic for other steps here as needed
+          if current_step == 'price':
+                response = _get_pricing(combined_data, self.tools)
+            elif current_step == 'booking':
+                print(f"🔥🔥🔥 {self.__class__.__name__.split('Agent')[0].upper()} AGENT: PROCEEDING TO BOOKING STEP 🔥🔥🔥")
+                response = _update_booking_with_details(combined_data, self.tools)
             else:
-                response = "I have all the information I need, would you like to proceed with the booking?"
-            
+                if not combined_data.get('firstName'):
+                    response = "What's your name?"
+                elif not combined_data.get('postcode'):
+                    response = "What's your postcode?"
+                elif len(combined_data.get('postcode', '')) < 5:
+                    response = "Could you please provide the full postcode?"
+                elif not combined_data.get('service'):
+                    response = "What service do you need?"
+                elif not combined_data.get('type'):
+                    response = "What size skip do you need?"
+                elif not combined_data.get('waste_type'):
+                    response = "What type of waste do you have?"
+                elif not combined_data.get('preferred_date'):
+                    response = "When would you like the delivery?"
+                else:
+                    response = "I have all the information I need, would you like me to get a price for you?"
+        
+                
         _save_state(conversation_id, combined_data)
         return response
 
