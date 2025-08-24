@@ -687,6 +687,9 @@ def _call_supplier_if_needed(booking_result: Dict[str, Any], customer_data: Dict
 # ===============================
 # SKIP HIRE AGENT CLASS
 # ===============================
+# ===============================
+# SKIP HIRE AGENT CLASS
+# ===============================
 class SkipHireAgent:
     def __init__(self, llm, tools: List[BaseTool]):
         self.llm = llm
@@ -699,7 +702,7 @@ class SkipHireAgent:
         self.agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=self.prompt)
         self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
         print("✅ SKIP HIRE AGENT initialized with 4-step booking process")
-    
+
     def process_message(self, message: str, context: Dict = None) -> str:
         print(f"\n🔧 SKIP AGENT RECEIVED: '{message}'")
         conversation_id = context.get('conversation_id') if context else 'default'
@@ -709,37 +712,36 @@ class SkipHireAgent:
         extracted_data = _extract_data(message, context)
         combined_data = {**_load_state(conversation_id), **extracted_data}
         transfer_check = _check_transfer_needed_with_office_hours(message, combined_data, is_office_hours, 'skip')
-        
+
         if transfer_check:
             _save_state(conversation_id, combined_data)
             return f"TRANSFER_TO_ORCHESTRATOR:{json.dumps(combined_data)}"
-        
+
         current_step = _determine_step(combined_data, message)
-        
-          if current_step == 'price':
-                response = _get_pricing(combined_data, self.tools)
-            elif current_step == 'booking':
-                print(f"🔥🔥🔥 {self.__class__.__name__.split('Agent')[0].upper()} AGENT: PROCEEDING TO BOOKING STEP 🔥🔥🔥")
-                response = _update_booking_with_details(combined_data, self.tools)
+
+        if current_step == 'price':
+            response = _get_pricing(combined_data, self.tools)
+        elif current_step == 'booking':
+            print(f"🔥🔥🔥 {self.__class__.__name__.split('Agent')[0].upper()} AGENT: PROCEEDING TO BOOKING STEP 🔥🔥🔥")
+            response = _update_booking_with_details(combined_data, self.tools)
+        else:
+            if not combined_data.get('firstName'):
+                response = "What's your name?"
+            elif not combined_data.get('postcode'):
+                response = "What's your postcode?"
+            elif len(combined_data.get('postcode', '')) < 5:
+                response = "Could you please provide the full postcode?"
+            elif not combined_data.get('service'):
+                response = "What service do you need?"
+            elif not combined_data.get('type'):
+                response = "What size skip do you need?"
+            elif not combined_data.get('waste_type'):
+                response = "What type of waste do you have?"
+            elif not combined_data.get('preferred_date'):
+                response = "When would you like the delivery?"
             else:
-                if not combined_data.get('firstName'):
-                    response = "What's your name?"
-                elif not combined_data.get('postcode'):
-                    response = "What's your postcode?"
-                elif len(combined_data.get('postcode', '')) < 5:
-                    response = "Could you please provide the full postcode?"
-                elif not combined_data.get('service'):
-                    response = "What service do you need?"
-                elif not combined_data.get('type'):
-                    response = "What size skip do you need?"
-                elif not combined_data.get('waste_type'):
-                    response = "What type of waste do you have?"
-                elif not combined_data.get('preferred_date'):
-                    response = "When would you like the delivery?"
-                else:
-                    response = "I have all the information I need, would you like me to get a price for you?"
-        
-                
+                response = "I have all the information I need, would you like me to get a price for you?"
+    
         _save_state(conversation_id, combined_data)
         return response
 
@@ -760,23 +762,26 @@ class ManAndVanAgent:
         print("✅ MAN & VAN AGENT initialized with 4-step booking process")
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        print(f"\n🔧 MAV AGENT RECEIVED: '{message}'")
+        print(f"\n🔧 SKIP AGENT RECEIVED: '{message}'")
         conversation_id = context.get('conversation_id') if context else 'default'
         datetime_result = _call_datetime_tool(self.tools)
         is_office_hours = datetime_result.get('is_business_hours', False)
         _load_state(conversation_id)
         extracted_data = _extract_data(message, context)
         combined_data = {**_load_state(conversation_id), **extracted_data}
-        transfer_check = _check_transfer_needed_with_office_hours(message, combined_data, is_office_hours, 'mav')
-        
+        transfer_check = _check_transfer_needed_with_office_hours(message, combined_data, is_office_hours, 'skip')
+
         if transfer_check:
             _save_state(conversation_id, combined_data)
             return f"TRANSFER_TO_ORCHESTRATOR:{json.dumps(combined_data)}"
-        
+
         current_step = _determine_step(combined_data, message)
-        
-        if current_step == 'price' or current_step == 'booking':
-            response = _create_booking_and_get_price(combined_data, self.tools)
+
+        if current_step == 'price':
+            response = _get_pricing(combined_data, self.tools)
+        elif current_step == 'booking':
+            print(f"🔥🔥🔥 {self.__class__.__name__.split('Agent')[0].upper()} AGENT: PROCEEDING TO BOOKING STEP 🔥🔥🔥")
+            response = _update_booking_with_details(combined_data, self.tools)
         else:
             if not combined_data.get('firstName'):
                 response = "What's your name?"
@@ -786,10 +791,15 @@ class ManAndVanAgent:
                 response = "Could you please provide the full postcode?"
             elif not combined_data.get('service'):
                 response = "What service do you need?"
-            # Add logic for other steps here as needed
+            elif not combined_data.get('type'):
+                response = "What size skip do you need?"
+            elif not combined_data.get('waste_type'):
+                response = "What type of waste do you have?"
+            elif not combined_data.get('preferred_date'):
+                response = "When would you like the delivery?"
             else:
-                response = "I have all the information I need, would you like to proceed with the booking?"
-            
+                response = "I have all the information I need, would you like me to get a price for you?"
+    
         _save_state(conversation_id, combined_data)
         return response
 
@@ -810,23 +820,26 @@ class GrabHireAgent:
         print("✅ GRAB HIRE AGENT initialized with 4-step booking process")
     
     def process_message(self, message: str, context: Dict = None) -> str:
-        print(f"\n🔧 GRAB AGENT RECEIVED: '{message}'")
+        print(f"\n🔧 SKIP AGENT RECEIVED: '{message}'")
         conversation_id = context.get('conversation_id') if context else 'default'
         datetime_result = _call_datetime_tool(self.tools)
         is_office_hours = datetime_result.get('is_business_hours', False)
         _load_state(conversation_id)
         extracted_data = _extract_data(message, context)
         combined_data = {**_load_state(conversation_id), **extracted_data}
-        transfer_check = _check_transfer_needed_with_office_hours(message, combined_data, is_office_hours, 'grab')
-        
+        transfer_check = _check_transfer_needed_with_office_hours(message, combined_data, is_office_hours, 'skip')
+
         if transfer_check:
             _save_state(conversation_id, combined_data)
             return f"TRANSFER_TO_ORCHESTRATOR:{json.dumps(combined_data)}"
-        
+
         current_step = _determine_step(combined_data, message)
-        
-        if current_step == 'price' or current_step == 'booking':
-            response = _create_booking_and_get_price(combined_data, self.tools)
+
+        if current_step == 'price':
+            response = _get_pricing(combined_data, self.tools)
+        elif current_step == 'booking':
+            print(f"🔥🔥🔥 {self.__class__.__name__.split('Agent')[0].upper()} AGENT: PROCEEDING TO BOOKING STEP 🔥🔥🔥")
+            response = _update_booking_with_details(combined_data, self.tools)
         else:
             if not combined_data.get('firstName'):
                 response = "What's your name?"
@@ -836,13 +849,17 @@ class GrabHireAgent:
                 response = "Could you please provide the full postcode?"
             elif not combined_data.get('service'):
                 response = "What service do you need?"
-            # Add logic for other steps here as needed
+            elif not combined_data.get('type'):
+                response = "What size skip do you need?"
+            elif not combined_data.get('waste_type'):
+                response = "What type of waste do you have?"
+            elif not combined_data.get('preferred_date'):
+                response = "When would you like the delivery?"
             else:
-                response = "I have all the information I need, would you like to proceed with the booking?"
-            
+                response = "I have all the information I need, would you like me to get a price for you?"
+    
         _save_state(conversation_id, combined_data)
         return response
-
 # ===============================
 # CONVERSATION CONTEXT MANAGEMENT
 # ===============================
